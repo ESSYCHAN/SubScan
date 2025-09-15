@@ -1,0 +1,289 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    /* ── Helpers ─────────────────────────────────────────── */
+    function signedIn() {
+      return request.auth != null;
+    }
+    function isSelf(uid) {
+      return signedIn() && request.auth.uid == uid;
+    }
+
+    // Flat "owner via userId" helpers (legacy top-level collections)
+    function isOwner() {
+      return signedIn() && resource.data.userId == request.auth.uid;
+    }
+    function createsAsOwner() {
+      return signedIn() && request.resource.data.userId == request.auth.uid;
+    }
+    function keepOwnerUnchanged() {
+      return request.resource.data.userId == resource.data.userId
+             && resource.data.userId == request.auth.uid;
+    }
+
+    // Field validators
+    function isNumberField(name) {
+      return !(name in request.resource.data) || request.resource.data[name] is number;
+    }
+    function isNonNegative(name) {
+      return !(name in request.resource.data)
+             || (request.resource.data[name] is number && request.resource.data[name] >= 0);
+    }
+    function unchanged(field) {
+      return !(field in request.resource.data) || request.resource.data[field] == resource.data[field];
+    }
+
+    /* ── Household membership/roles ──────────────────────── */
+    function memberDoc(hid) {
+      return get(/databases/$(database)/documents/households/$(hid)/members/$(request.auth.uid));
+    }
+    function isMember(hid) {
+      return signedIn() && memberDoc(hid).exists();
+    }
+    function role(hid) {
+      return isMember(hid) ? memberDoc(hid).data.role : null; // 'owner'|'editor'|'viewer'
+    }
+    function isOwnerRole(hid) {
+      return role(hid) == 'owner';
+    }
+    function isEditor(hid) {
+      return role(hid) == 'owner' || role(hid) == 'editor';
+    }
+
+    // Solo household id helper
+    function isSolo(hid) {
+      return signedIn() && ('solo:' + request.auth.uid) == hid;
+    }
+
+    // Read owner check via the household doc
+    function isOwnerOfHousehold(hid) {
+      return signedIn()
+        && get(/databases/$(database)/documents/households/$(hid)).data.ownerUid == request.auth.uid;
+    }
+
+    /* ── /households/{hid} tree ──────────────────────────── */
+    match /households/{hid} {
+      // allow the owner (by doc) or any member; also allow solo users to read their own hid
+      allow read: if isMember(hid) || isOwnerOfHousehold(hid) || isSolo(hid);
+
+      // create: creator sets ownerUid to self
+      allow create: if signedIn() && request.resource.data.ownerUid == request.auth.uid;
+
+      // update: only owner; ownerUid cannot change
+      allow update: if (isOwnerRole(hid) || (isSolo(hid) && resource.data.ownerUid == request.auth.uid))
+        && unchanged('ownerUid');
+
+      allow delete: if isOwnerRole(hid);
+
+      /* members */
+      match /members/{uid} {
+        // allow owner/member to read members; also allow solo read while bootstrapping
+        allow read: if isMember(hid) || isOwnerOfHousehold(hid) || isSolo(hid);
+
+        // ✅ Revised create:
+        // - Invite path (unchanged)
+        // - Solo bootstrap if hid == 'solo:{uid}'
+        // - Owner bootstrap if household doc already marks you as owner
+        // - householdId is optional; if present it must match hid
+        allow create: if signedIn() && uid == request.auth.uid
+          && request.resource.data.uid == uid
+          && ( !('householdId' in request.resource.data) || request.resource.data.householdId == hid )
+          && (
+              (
+                (request.resource.data.role in ['viewer','editor','owner'])
+                && (request.resource.data.inviteId is string)
+                && get(/databases/$(database)/documents/invites/$(request.resource.data.inviteId)).data.status == 'claimed'
+                && get(/databases/$(database)/documents/invites/$(request.resource.data.inviteId)).data.claimedBy == uid
+                && get(/databases/$(database)/documents/invites/$(request.resource.data.inviteId)).data.householdId == hid
+              )
+              ||
+              ( isSolo(hid) && request.resource.data.role == 'owner' )
+              ||
+              ( isOwnerOfHousehold(hid) && request.resource.data.role == 'owner' )
+            );
+
+        // owner manages roles/removals
+        allow update: if isOwnerRole(hid) && request.resource.data.uid == resource.data.uid;
+        allow delete: if isOwnerRole(hid);
+      }
+
+      /* categories: 'spent' is derived, must not be written by clients */
+      match /categories/{catId} {
+        allow read: if isMember(hid) || isOwnerOfHousehold(hid);
+
+        allow create: if (isEditor(hid) || isOwnerOfHousehold(hid))
+          && request.resource.data.householdId == hid
+          && isNumberField('monthlyBudget') && isNonNegative('monthlyBudget')
+          && !('spent' in request.resource.data);
+
+        allow update: if (isEditor(hid) || isOwnerOfHousehold(hid))
+          && ( !( 'householdId' in request.resource.data ) || request.resource.data.householdId == resource.data.householdId )
+          && isNumberField('monthlyBudget') && isNonNegative('monthlyBudget')
+          && unchanged('spent');
+
+        allow delete: if isEditor(hid) || isOwnerOfHousehold(hid);
+      }
+
+      /* transactions */
+      match /transactions/{txnId} {
+        allow read: if isMember(hid) || isOwnerOfHousehold(hid);
+        allow create: if (isEditor(hid) || isOwnerOfHousehold(hid))
+          && request.resource.data.householdId == hid
+          && isNumberField('amount') && isNonNegative('amount');
+        allow update: if (isEditor(hid) || isOwnerOfHousehold(hid))
+          && ( !( 'householdId' in request.resource.data ) || request.resource.data.householdId == resource.data.householdId )
+          && isNumberField('amount') && isNonNegative('amount');
+        allow delete: if isEditor(hid) || isOwnerOfHousehold(hid);
+      }
+
+      /* planned items */
+      match /plannedItems/{pid} {
+        allow read: if isMember(hid) || isOwnerOfHousehold(hid);
+        allow create: if (isEditor(hid) || isOwnerOfHousehold(hid))
+          && request.resource.data.householdId == hid
+          && isNumberField('amount') && isNonNegative('amount');
+        allow update: if (isEditor(hid) || isOwnerOfHousehold(hid))
+          && ( !( 'householdId' in request.resource.data ) || request.resource.data.householdId == resource.data.householdId )
+          && isNumberField('amount') && isNonNegative('amount');
+        allow delete: if isEditor(hid) || isOwnerOfHousehold(hid);
+      }
+
+      /* household-scoped subscriptions/goals/settings (optional) */
+      match /subscriptions/{sid} {
+        allow read: if isMember(hid) || isOwnerOfHousehold(hid);
+        allow create: if (isEditor(hid) || isOwnerOfHousehold(hid))
+          && request.resource.data.householdId == hid
+          && isNumberField('cost') && isNonNegative('cost');
+        allow update: if (isEditor(hid) || isOwnerOfHousehold(hid))
+          && ( !( 'householdId' in request.resource.data ) || request.resource.data.householdId == resource.data.householdId )
+          && isNumberField('cost') && isNonNegative('cost');
+        allow delete: if isEditor(hid) || isOwnerOfHousehold(hid);
+      }
+
+      match /goals/{gid} {
+        allow read: if isMember(hid) || isOwnerOfHousehold(hid);
+        allow create: if (isEditor(hid) || isOwnerOfHousehold(hid))
+          && request.resource.data.householdId == hid
+          && isNumberField('target') && isNonNegative('target')
+          && isNumberField('current') && isNonNegative('current');
+        allow update: if (isEditor(hid) || isOwnerOfHousehold(hid))
+          && ( !( 'householdId' in request.resource.data ) || request.resource.data.householdId == resource.data.householdId )
+          && isNumberField('target') && isNonNegative('target')
+          && isNumberField('current') && isNonNegative('current');
+        allow delete: if isEditor(hid) || isOwnerOfHousehold(hid);
+      }
+
+      match /settings/{sid} {
+        allow read: if isMember(hid) || isOwnerOfHousehold(hid);
+        allow create, update: if (isEditor(hid) || isOwnerOfHousehold(hid))
+          && request.resource.data.householdId == hid
+          && ( !( 'householdId' in request.resource.data ) || request.resource.data.householdId == resource.data.householdId );
+        allow delete: if isOwnerRole(hid);
+      }
+    }
+
+    /* ── Top-level invites used by accept screen ─────────── */
+    match /invites/{inviteId} {
+      allow read: if true;
+      allow create: if signedIn()
+        && (request.resource.data.householdId is string)
+        && (
+             get(/databases/$(database)/documents/households/$(request.resource.data.householdId)/members/$(request.auth.uid)).data.role == 'owner'
+          || get(/databases/$(database)/documents/households/$(request.resource.data.householdId)/members/$(request.auth.uid)).data.role == 'editor'
+        )
+        && (request.resource.data.roleSuggested in ['viewer','editor'])
+        && request.resource.data.status == 'active'
+        && request.resource.data.token is string
+        && request.resource.data.createdBy == request.auth.uid;
+
+      allow update: if signedIn()
+        && resource.data.status == 'active'
+        && request.resource.data.status == 'claimed'
+        && request.resource.data.claimedBy == request.auth.uid
+        && request.resource.data.roleAccepted == resource.data.roleSuggested
+        && request.resource.data.token == resource.data.token;
+    }
+
+    /* ── Legacy flat collections (per-user by userId) ───── */
+    match /subscriptions/{id} {
+      allow read: if isOwner();
+      allow create: if createsAsOwner()
+        && isNumberField('cost') && isNonNegative('cost');
+      allow update: if isOwner() && keepOwnerUnchanged()
+        && isNumberField('cost') && isNonNegative('cost');
+      allow delete: if isOwner();
+    }
+
+    match /categories/{id} {
+      allow read: if isOwner();
+      allow create: if createsAsOwner();
+      allow update: if isOwner() && keepOwnerUnchanged() && unchanged('spent');
+      allow delete: if isOwner() && keepOwnerUnchanged();
+    }
+
+    match /envelopes/{id} {
+      allow read: if isOwner();
+      allow create: if createsAsOwner();
+      allow update, delete: if isOwner() && keepOwnerUnchanged();
+    }
+
+    match /plannedItems/{id} {
+      allow read: if isOwner();
+      allow create: if createsAsOwner() && isNumberField('amount') && isNonNegative('amount');
+      allow update, delete: if isOwner() && keepOwnerUnchanged()
+        && isNumberField('amount') && isNonNegative('amount');
+    }
+
+    match /insights/{id} {
+      allow read: if isOwner();
+      allow create: if createsAsOwner();
+      allow update, delete: if isOwner() && keepOwnerUnchanged();
+    }
+
+    match /userSubscriptions/{id} {
+      allow read: if isOwner();
+      allow create: if createsAsOwner();
+      allow update, delete: if isOwner() && keepOwnerUnchanged();
+    }
+
+    match /scanResults/{id} {
+      allow read: if isOwner();
+      allow create: if createsAsOwner();
+      allow update, delete: if isOwner() && keepOwnerUnchanged();
+    }
+
+    match /transactions/{id} {
+      allow read: if isOwner();
+      allow create: if createsAsOwner() && isNumberField('amount') && isNonNegative('amount');
+      allow update, delete: if isOwner() && keepOwnerUnchanged()
+        && isNumberField('amount') && isNonNegative('amount');
+    }
+
+    match /goals/{id} {
+      allow read: if isOwner();
+      allow create: if createsAsOwner()
+        && isNumberField('target') && isNonNegative('target')
+        && isNumberField('current') && isNonNegative('current');
+      allow update, delete: if isOwner() && keepOwnerUnchanged()
+        && isNumberField('target') && isNonNegative('target')
+        && isNumberField('current') && isNonNegative('current');
+    }
+
+    match /mortgageSettings/{id} {
+      allow read: if isOwner();
+      allow create: if createsAsOwner();
+      allow update, delete: if isOwner() && keepOwnerUnchanged();
+    }
+
+    /* per-user subtree, if you use /users/{uid}/... */
+    match /users/{userId}/{document=**} {
+      allow read, write: if isSelf(userId);
+    }
+
+    /* public read-only */
+    match /public/{document=**} {
+      allow read: if true;
+    }
+  }
+}

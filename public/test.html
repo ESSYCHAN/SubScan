@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SubScan - Button Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0;
+        }
+        .container {
+            background: white;
+            padding: 2rem;
+            border-radius: 1rem;
+            text-align: center;
+            max-width: 500px;
+        }
+        button {
+            background: #4f46e5;
+            color: white;
+            padding: 1rem 2rem;
+            border: none;
+            border-radius: 0.5rem;
+            font-size: 1.1rem;
+            cursor: pointer;
+            margin: 0.5rem;
+        }
+        button:hover {
+            background: #4338ca;
+        }
+        .red { background: #dc2626; }
+        .green { background: #16a34a; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>SubScan - Button Test</h1>
+        <p>Testing basic navigation without React</p>
+        
+        <button onclick="testAlert()">Test Alert</button>
+        <button onclick="goToDashboard()">Go to Dashboard</button>
+        <button onclick="goHome()" class="green">Go to Home</button>
+        
+        <div id="debug" style="margin-top: 2rem; padding: 1rem; background: #f3f4f6; border-radius: 0.5rem;">
+            <p>Debug info will appear here</p>
+        </div>
+    </div>
+
+    <script>
+        console.log('JavaScript loaded successfully');
+        
+        function testAlert() {
+            console.log('Alert button clicked');
+            alert('JavaScript is working!');
+            document.getElementById('debug').innerHTML = '<p style="color: green;">Alert test successful!</p>';
+        }
+        
+        function goToDashboard() {
+            console.log('Dashboard button clicked');
+            document.getElementById('debug').innerHTML = '<p>Navigating to dashboard...</p>';
+            window.location.href = '/dashboard';
+        }
+        
+        function goHome() {
+            console.log('Home button clicked');
+            document.getElementById('debug').innerHTML = '<p>Navigating to home...</p>';
+            window.location.href = '/';
+        }
+        
+        // Test on page load
+        document.addEventListener('DOMContentLoaded', function() {
+            console.log('Page loaded, DOM ready');
+            document.getElementById('debug').innerHTML = '<p style="color: blue;">Page loaded successfully</p>';
+        });
+    </script>
+</body>
+</html>

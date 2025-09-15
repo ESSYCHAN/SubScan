@@ -1,0 +1,28 @@
+{
+  "name": "functions",
+  "scripts": {
+    "build": "tsc",
+    "serve": "npm run build && firebase emulators:start --only functions",
+    "shell": "npm run build && firebase functions:shell",
+    "start": "npm run shell",
+    "deploy": "firebase deploy --only functions",
+    "logs": "firebase functions:log"
+  },
+  "engines": {
+    "node": "18"
+  },
+  "main": "lib/index.js",
+  "dependencies": {
+    "@sendgrid/mail": "^8.1.5",
+    "firebase-admin": "^12.7.0",
+    "firebase-functions": "^4.9.0",
+    "nodemailer": "^7.0.6",
+    "openai": "^5.19.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/nodemailer": "^6.4.7",
+    "typescript": "^5.9.2"
+  },
+  "private": true
+}
