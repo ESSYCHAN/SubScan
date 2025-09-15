@@ -1,6 +1,25 @@
+# Node/Next
 node_modules/
 .next/
+out/
+dist/
+coverage/
+.cache/
+.turbo/
+
+# Firebase
+.firebase/
+firebase-debug.log
+functions/lib/
+
+# Env & secrets
 .env
 .env.*
-dist/
+!.env.example
+
+# OS/IDE/logs
 .DS_Store
+*.log
+.idea/
+.vscode/*
+!.vscode/extensions.json
