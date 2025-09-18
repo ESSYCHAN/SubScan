@@ -1,9 +1,397 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // TEMPORARY DEBUG RULE - REMOVE IN PRODUCTION
-    match /{document=**} {
-      allow read, write: if request.auth != null;
+
+    /* ── Helpers ─────────────────────────────────────────── */
+    function signedIn() {
+      return request.auth != null;
+    }
+    function isSelf(uid) {
+      return signedIn() && request.auth.uid == uid;
+    }
+
+    // Flat "owner via userId" helpers (legacy top-level collections)
+    function isOwner() {
+      return signedIn() && resource.data.userId == request.auth.uid;
+    }
+    function createsAsOwner() {
+      return signedIn() && request.resource.data.userId == request.auth.uid;
+    }
+    function keepOwnerUnchanged() {
+      return request.resource.data.userId == resource.data.userId
+             && resource.data.userId == request.auth.uid;
+    }
+
+    // Field validators
+    function isNumberField(name) {
+      return !(name in request.resource.data) || request.resource.data[name] is number;
+    }
+    function isNonNegative(name) {
+      return !(name in request.resource.data)
+             || (request.resource.data[name] is number && request.resource.data[name] >= 0);
+    }
+    function unchanged(field) {
+      return !(field in request.resource.data) || request.resource.data[field] == resource.data[field];
+    }
+    function reasonableSize() {
+      return request.resource.size < 100000; // 100KB limit
+    }
+    function validString(field, minLen, maxLen) {
+      return (field in request.resource.data) 
+        && request.resource.data[field] is string
+        && request.resource.data[field].size() >= minLen
+        && request.resource.data[field].size() <= maxLen;
+    }
+
+    /* ── Household membership/roles ──────────────────────── */
+    function memberDoc(hid) {
+      return get(/databases/$(database)/documents/households/$(hid)/members/$(request.auth.uid));
+    }
+
+    function isMember(hid) {
+        return signedIn() && exists(/databases/$(database)/documents/households/$(hid)/members/$(request.auth.uid));
+        }
+    function role(hid) {
+      return isMember(hid) ? memberDoc(hid).data.role : null; // 'owner'|'editor'|'viewer'
+    }
+    function isOwnerRole(hid) {
+      return role(hid) == 'owner';
+    }
+    function isEditor(hid) {
+      return role(hid) == 'owner' || role(hid) == 'editor';
+    }
+
+    // Solo household id helper
+    function isSolo(hid) {
+      return signedIn() && ('solo:' + request.auth.uid) == hid;
+    }
+
+    // Read owner check via the household doc
+    function isOwnerOfHousehold(hid) {
+      return signedIn()
+        && get(/databases/$(database)/documents/households/$(hid)).data.ownerUid == request.auth.uid;
+    }
+
+    /* ── /households/{hid} tree ──────────────────────────── */
+    match /households/{hid} {
+      // allow the owner (by doc) or any member; also allow solo users to read their own hid
+      allow read: if isMember(hid) || isOwnerOfHousehold(hid) || isSolo(hid);
+
+      // create: creator sets ownerUid to self
+      allow create: if signedIn() && request.resource.data.ownerUid == request.auth.uid && reasonableSize();
+
+      // update: only owner; ownerUid cannot change
+      allow update: if (isOwnerRole(hid) || (isSolo(hid) && resource.data.ownerUid == request.auth.uid))
+        && unchanged('ownerUid') && reasonableSize();
+
+      allow delete: if isOwnerRole(hid);
+
+      /* members */
+      match /members/{uid} {
+        // allow owner/member to read members; also allow solo read while bootstrapping
+        allow read: if isMember(hid) || isOwnerOfHousehold(hid) || isSolo(hid);
+
+        // FIXED create rule - handles solo household bootstrap properly
+        allow create: if signedIn() && uid == request.auth.uid
+          && request.resource.data.uid == uid
+          && ( !('householdId' in request.resource.data) || request.resource.data.householdId == hid )
+          && reasonableSize()
+          && (
+              // Invite path (unchanged)
+              (
+                (request.resource.data.role in ['viewer','editor','owner'])
+                && (request.resource.data.inviteId is string)
+                && get(/databases/$(database)/documents/invites/$(request.resource.data.inviteId)).data.status == 'claimed'
+                && get(/databases/$(database)/documents/invites/$(request.resource.data.inviteId)).data.claimedBy == uid
+                && get(/databases/$(database)/documents/invites/$(request.resource.data.inviteId)).data.householdId == hid
+              )
+              ||
+              // Solo bootstrap - check hid format directly instead of using isSolo()
+              ( 
+                hid == ('solo:' + request.auth.uid)
+                && request.resource.data.role == 'owner' 
+                && !('inviteId' in request.resource.data)
+              )
+              ||
+              // Owner bootstrap if household doc already marks you as owner
+              ( 
+                isOwnerOfHousehold(hid) 
+                && request.resource.data.role == 'owner' 
+                && !('inviteId' in request.resource.data)
+              )
+            );
+
+        // owner manages roles/removals
+        allow update: if isOwnerRole(hid) && request.resource.data.uid == resource.data.uid && reasonableSize();
+        allow delete: if isOwnerRole(hid);
+      }
+
+      /* categories: 'spent' is derived, must not be written by clients */
+      match /categories/{catId} {
+        allow read: if isMember(hid) || isOwnerOfHousehold(hid) || isSolo(hid);
+
+        allow create: if (isEditor(hid) || isOwnerOfHousehold(hid) || isSolo(hid))
+          && request.resource.data.householdId == hid
+          && validString('name', 1, 100)
+          && isNumberField('monthlyBudget') && isNonNegative('monthlyBudget')
+          && !('spent' in request.resource.data)
+          && reasonableSize()
+          && request.resource.data.createdAt == request.time;
+
+        allow update: if (isEditor(hid) || isOwnerOfHousehold(hid) || isSolo(hid))
+          && ( !( 'householdId' in request.resource.data ) || request.resource.data.householdId == resource.data.householdId )
+          && isNumberField('monthlyBudget') && isNonNegative('monthlyBudget')
+          && unchanged('spent')
+          && reasonableSize();
+
+        allow delete: if isEditor(hid) || isOwnerOfHousehold(hid) || isSolo(hid);
+      }
+
+      /* transactions */
+      match /transactions/{txnId} {
+        allow read: if isMember(hid) || isOwnerOfHousehold(hid) || isSolo(hid);
+        
+        allow create: if (isEditor(hid) || isOwnerOfHousehold(hid) || isSolo(hid))
+          && request.resource.data.householdId == hid
+          && validString('title', 1, 200)
+          && request.resource.data.categoryId is string
+          && isNumberField('amount') && isNonNegative('amount')
+          && reasonableSize()
+          && request.resource.data.createdAt == request.time;
+          
+        allow update: if (isEditor(hid) || isOwnerOfHousehold(hid) || isSolo(hid))
+          && ( !( 'householdId' in request.resource.data ) || request.resource.data.householdId == resource.data.householdId )
+          && isNumberField('amount') && isNonNegative('amount')
+          && reasonableSize();
+          
+        allow delete: if isEditor(hid) || isOwnerOfHousehold(hid) || isSolo(hid);
+      }
+
+      /* planned items */
+      match /plannedItems/{pid} {
+        allow read: if isMember(hid) || isOwnerOfHousehold(hid) || isSolo(hid);
+        
+        allow create: if (isEditor(hid) || isOwnerOfHousehold(hid) || isSolo(hid))
+          && request.resource.data.householdId == hid
+          && isNumberField('amount') && isNonNegative('amount')
+          && reasonableSize();
+          
+        allow update: if (isEditor(hid) || isOwnerOfHousehold(hid) || isSolo(hid))
+          && ( !( 'householdId' in request.resource.data ) || request.resource.data.householdId == resource.data.householdId )
+          && isNumberField('amount') && isNonNegative('amount')
+          && reasonableSize();
+          
+        allow delete: if isEditor(hid) || isOwnerOfHousehold(hid) || isSolo(hid);
+      }
+
+      /* household-scoped subscriptions/goals/settings (optional) */
+      match /subscriptions/{sid} {
+        allow read: if isMember(hid) || isOwnerOfHousehold(hid) || isSolo(hid);
+        
+        allow create: if (isEditor(hid) || isOwnerOfHousehold(hid) || isSolo(hid))
+          && request.resource.data.householdId == hid
+          && isNumberField('cost') && isNonNegative('cost')
+          && reasonableSize();
+          
+        allow update: if (isEditor(hid) || isOwnerOfHousehold(hid) || isSolo(hid))
+          && ( !( 'householdId' in request.resource.data ) || request.resource.data.householdId == resource.data.householdId )
+          && isNumberField('cost') && isNonNegative('cost')
+          && reasonableSize();
+          
+        allow delete: if isEditor(hid) || isOwnerOfHousehold(hid) || isSolo(hid);
+      }
+
+      match /goals/{gid} {
+        allow read: if isMember(hid) || isOwnerOfHousehold(hid) || isSolo(hid);
+        
+        allow create: if (isEditor(hid) || isOwnerOfHousehold(hid) || isSolo(hid))
+          && request.resource.data.householdId == hid
+          && validString('name', 1, 100)
+          && request.resource.data.deadline is string
+          && isNumberField('target') && isNonNegative('target')
+          && isNumberField('current') && isNonNegative('current')
+          && reasonableSize();
+          
+        allow update: if (isEditor(hid) || isOwnerOfHousehold(hid) || isSolo(hid))
+          && ( !( 'householdId' in request.resource.data ) || request.resource.data.householdId == resource.data.householdId )
+          && isNumberField('target') && isNonNegative('target')
+          && isNumberField('current') && isNonNegative('current')
+          && reasonableSize();
+          
+        allow delete: if isEditor(hid) || isOwnerOfHousehold(hid) || isSolo(hid);
+      }
+
+      /* budget periods for monthly tracking */
+      match /budgetPeriods/{month} {
+        allow read: if isMember(hid) || isOwnerOfHousehold(hid) || isSolo(hid);
+        
+        allow create: if (isEditor(hid) || isOwnerOfHousehold(hid) || isSolo(hid))
+          && request.resource.data.month == month
+          && request.resource.data.month is string
+          && request.resource.data.month.matches('^[0-9]{4}-[0-9]{2}$')
+          && request.resource.data.categories is map
+          && request.resource.data.goals is map
+          && reasonableSize();
+          
+        allow update: if (isEditor(hid) || isOwnerOfHousehold(hid) || isSolo(hid))
+          && unchanged('month')
+          && reasonableSize();
+          
+        allow delete: if isEditor(hid) || isOwnerOfHousehold(hid) || isSolo(hid);
+      }
+
+      match /settings/{sid} {
+        allow read: if isMember(hid) || isOwnerOfHousehold(hid) || isSolo(hid);
+        
+        allow create, update: if (isEditor(hid) || isOwnerOfHousehold(hid) || isSolo(hid))
+          && request.resource.data.householdId == hid
+          && ( !( 'householdId' in request.resource.data ) || request.resource.data.householdId == resource.data.householdId )
+          && reasonableSize();
+          
+        allow delete: if isOwnerRole(hid) || isSolo(hid);
+      }
+    }
+
+    /* ── Top-level invites used by accept screen ─────────── */
+    match /invites/{inviteId} {
+      allow read: if signedIn();
+      
+      allow create: if signedIn()
+        && (request.resource.data.householdId is string)
+        && (
+             get(/databases/$(database)/documents/households/$(request.resource.data.householdId)/members/$(request.auth.uid)).data.role == 'owner'
+          || get(/databases/$(database)/documents/households/$(request.resource.data.householdId)/members/$(request.auth.uid)).data.role == 'editor'
+        )
+        && (request.resource.data.roleSuggested in ['viewer','editor'])
+        && request.resource.data.status == 'active'
+        && request.resource.data.token is string
+        && request.resource.data.createdBy == request.auth.uid
+        && reasonableSize()
+        && request.resource.data.createdAt == request.time;
+
+      allow update: if signedIn()
+        && resource.data.status == 'active'
+        && request.resource.data.status == 'claimed'
+        && request.resource.data.claimedBy == request.auth.uid
+        && request.resource.data.roleAccepted == resource.data.roleSuggested
+        && request.resource.data.token == resource.data.token
+        && reasonableSize();
+    }
+
+    /* ── Legacy flat collections (per-user by userId) ───── */
+    match /subscriptions/{id} {
+      allow read: if isOwner();
+      
+      allow create: if createsAsOwner()
+        && isNumberField('cost') && isNonNegative('cost')
+        && reasonableSize();
+        
+      allow update: if isOwner() && keepOwnerUnchanged()
+        && isNumberField('cost') && isNonNegative('cost')
+        && reasonableSize();
+        
+      allow delete: if isOwner();
+    }
+
+    match /categories/{id} {
+      allow read: if isOwner();
+      
+      allow create: if createsAsOwner() && reasonableSize();
+      
+      allow update: if isOwner() && keepOwnerUnchanged() 
+        && unchanged('spent') && reasonableSize();
+        
+      allow delete: if isOwner();
+    }
+
+    match /envelopes/{id} {
+      allow read: if isOwner();
+      
+      allow create: if createsAsOwner() && reasonableSize();
+      
+      allow update, delete: if isOwner() && keepOwnerUnchanged();
+    }
+
+    match /plannedItems/{id} {
+      allow read: if isOwner();
+      
+      allow create: if createsAsOwner() 
+        && isNumberField('amount') && isNonNegative('amount')
+        && reasonableSize();
+        
+      allow update: if isOwner() && keepOwnerUnchanged() 
+        && isNumberField('amount') && isNonNegative('amount')
+        && reasonableSize();
+        
+      allow delete: if isOwner();
+    }
+
+    match /insights/{id} {
+      allow read: if isOwner();
+      
+      allow create: if createsAsOwner() && reasonableSize();
+      
+      allow update, delete: if isOwner() && keepOwnerUnchanged();
+    }
+
+    match /userSubscriptions/{id} {
+      allow read: if isOwner();
+      
+      allow create: if createsAsOwner() && reasonableSize();
+      
+      allow update, delete: if isOwner() && keepOwnerUnchanged();
+    }
+
+    match /scanResults/{id} {
+      allow read: if isOwner();
+      
+      allow create: if createsAsOwner() && reasonableSize();
+      
+      allow update, delete: if isOwner() && keepOwnerUnchanged();
+    }
+
+    match /transactions/{id} {
+      allow read: if isOwner();
+      
+      allow create: if createsAsOwner() 
+        && isNumberField('amount') && isNonNegative('amount')
+        && reasonableSize();
+        
+      allow update, delete: if isOwner() && keepOwnerUnchanged()
+        && isNumberField('amount') && isNonNegative('amount')
+        && reasonableSize();
+    }
+
+    match /goals/{id} {
+      allow read: if isOwner();
+      
+      allow create: if createsAsOwner()
+        && isNumberField('target') && isNonNegative('target')
+        && isNumberField('current') && isNonNegative('current')
+        && reasonableSize();
+        
+      allow update, delete: if isOwner() && keepOwnerUnchanged()
+        && isNumberField('target') && isNonNegative('target')
+        && isNumberField('current') && isNonNegative('current')
+        && reasonableSize();
+    }
+
+    match /mortgageSettings/{id} {
+      allow read: if isOwner();
+      
+      allow create: if createsAsOwner() && reasonableSize();
+      
+      allow update, delete: if isOwner() && keepOwnerUnchanged() && reasonableSize();
+    }
+
+    /* per-user subtree, if you use /users/{uid}/... */
+    match /users/{userId}/{document=**} {
+      allow read, write: if isSelf(userId) && reasonableSize();
+    }
+
+    /* public read-only */
+    match /public/{document=**} {
+      allow read: if true;
     }
   }
 }
