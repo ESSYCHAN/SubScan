@@ -1,3 +1,4 @@
+// components/InviteCreator.tsx
 "use client";
 import React, { useState } from "react";
 import { addDoc, collection, serverTimestamp } from "firebase/firestore";

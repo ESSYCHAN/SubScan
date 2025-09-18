@@ -1,3 +1,5 @@
+// src/app/receipt-scanner/page.tsx
+
 'use client';
 
 import React, { useState, useCallback } from 'react';

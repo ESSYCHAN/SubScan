@@ -1,3 +1,5 @@
+// src/hooks/useHousehold.ts
+
 "use client";
 import { useEffect, useMemo, useState } from "react";
 import { auth, db } from "@/lib/firebase";

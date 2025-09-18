@@ -2,7 +2,9 @@
 // Robust bank statement → recurring subscription extractor (UK-friendly)
 // Works with CSV (common bank exports) and free-text lines.
 // Exports keep your names/types so SubScanDashboardV2 just works.
-
+export const anchorToToday = (historicalDateString: string): string => {
+  return new Date().toISOString().slice(0, 10);
+};
 export interface RawTransaction {
   date: string;         // yyyy-mm-dd
   description: string;
@@ -26,6 +28,27 @@ export interface ParsedSubscription {
   nextBilling?: string;// yyyy-mm-dd (best guess)
   dayOfMonth?: number; // convenience alias
 }
+/**
+ * Calculate next billing date from today forward, not from historical transaction dates
+ * This ensures subscriptions appear in current/future months on the calendar
+ */
+export const calculateNextBilling = (lastSeen: string): string => {
+  const today = new Date();
+  const currentYear = today.getFullYear();
+  const currentMonth = today.getMonth();
+  
+  const historicalDate = new Date(lastSeen);
+  const billingDay = isNaN(historicalDate.getTime()) ? 1 : historicalDate.getDate();
+  
+  const nextBilling = new Date(currentYear, currentMonth, billingDay);
+  
+  if (nextBilling < today) {
+    nextBilling.setMonth(nextBilling.getMonth() + 1);
+  }
+  
+  return nextBilling.toISOString().slice(0, 10);
+};
+
 
 // Known services → category map (your labels)
 const SERVICE_PATTERNS: Array<{ pattern: RegExp; category: string; service: string }> = [
@@ -36,6 +59,9 @@ const SERVICE_PATTERNS: Array<{ pattern: RegExp; category: string; service: stri
   { pattern: /amazon\s*prime(?!\s*video)/i,  category: 'Video',  service: 'Amazon Prime' },
   { pattern: /disney/i,                     category: 'Video',         service: 'Disney+' },
   { pattern: /youtube.*premium/i,           category: 'Video',         service: 'YouTube Premium' },
+
+
+
   
   // Software / tech
 
@@ -79,6 +105,8 @@ const SERVICE_PATTERNS: Array<{ pattern: RegExp; category: string; service: stri
   { pattern: /overleaf|sharelatex/i,      category: 'Software',      service: 'Overleaf' },
   { pattern: /\bindesign\b/i,             category: 'Software',      service: 'InDesign' },
 ];
+
+
 
 function isKnownServiceLine(s: string) {
   return SERVICE_PATTERNS.some(p => p.pattern.test(s));
@@ -375,12 +403,12 @@ function toSubscriptions(txns: RawTransaction[]): ParsedSubscription[] {
 
     // nextBilling guess
     let nextBilling: string | undefined;
-    const last  = dates[dates.length - 1];
+    const last = dates[dates.length - 1];
     const first = dates[0];
-    if (freq === 'monthly')  { const nx = new Date(last); nx.setMonth(nx.getMonth()+1);  nextBilling = nx.toISOString().slice(0,10); }
-    else if (freq === 'weekly'){ const nx = new Date(last); nx.setDate(nx.getDate()+7);   nextBilling = nx.toISOString().slice(0,10); }
-    else if (freq === 'annual'){ const nx = new Date(last); nx.setFullYear(nx.getFullYear()+1); nextBilling = nx.toISOString().slice(0,10); }
 
+    if (freq === 'monthly' || freq === 'weekly' || freq === 'annual') {
+      nextBilling = calculateNextBilling(last.toISOString().slice(0, 10));
+    }
     // ✅ use the precomputed amount here
     const amt = amtCandidate;
 
@@ -395,10 +423,12 @@ function toSubscriptions(txns: RawTransaction[]): ParsedSubscription[] {
       dayOfMonth: last.getDate(),
       confidence: Math.min(100, conf + (freq === 'unknown' ? 0 : 5) + ddBoost),
       source: 'bank_scan',
-      lastUsed: last.toISOString().slice(0,10),
-      signUpDate: first.toISOString().slice(0,10),
+      // KEY CHANGE: Use today's date, not historical transaction date
+      lastUsed: new Date().toISOString().slice(0, 10), // TODAY
+      signUpDate: new Date().toISOString().slice(0, 10), // TODAY  
       ...(nextBilling ? { nextBilling } : {}),
     });
+
   }
 
   return subs;

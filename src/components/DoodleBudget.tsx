@@ -182,15 +182,47 @@ export default function DoodleBudget() {
 
   // Apply only changed budgets (NEVER touches 'spent')
   const applyToRealBudget = async () => {
+  console.log("🚀 Apply button clicked!");
+  console.log("📊 Current state:", {
+    remaining,
+    wallet,
+    assigned,
+    categoriesCount: catList.length,
+    draft,
+    updateCategoryExists: !!updateCategory
+  });
+
+  if (remaining !== 0) {
+    alert(`Cannot apply budget - you have £${remaining} remaining. Please allocate all funds first.`);
+    return;
+  }
+
+  try {
     const ops: Promise<void>[] = [];
     for (const c of catList) {
-      const next = Math.round((draft[c.id] || 0) * 100) / 100;
-      if (next !== (c.monthlyBudget || 0)) {
-        ops.push(updateCategory(c.id, { monthlyBudget: next }));
+      const currentBudget = c.monthlyBudget || 0;
+      const newBudget = Math.round((draft[c.id] || 0) * 100) / 100;
+      
+      console.log(`📝 ${c.name}: ${currentBudget} → ${newBudget}`);
+      
+      if (newBudget !== currentBudget) {
+        ops.push(updateCategory(c.id, { monthlyBudget: newBudget }));
       }
     }
-    if (ops.length) await Promise.all(ops);
-  };
+    
+    if (ops.length === 0) {
+      alert("No changes to apply");
+      return;
+    }
+    
+    console.log(`🔄 Applying ${ops.length} updates...`);
+    await Promise.all(ops);
+    alert(`✅ Successfully updated ${ops.length} categories!`);
+  } catch (error: any) {
+    console.error("❌ Error:", error);
+    alert(`Error: ${error?.message || 'Unknown error'}`);
+  }
+};
 
   // Keyboard shortcuts for coin quick-pick
   useEffect(() => {
@@ -275,12 +307,19 @@ export default function DoodleBudget() {
           <button
             onClick={applyToRealBudget}
             disabled={remaining !== 0}
-            className={`px-4 py-2.5 rounded-xl text-sm font-medium inline-flex items-center gap-2 ${
-              remaining === 0 ? "bg-gray-900 text-white hover:bg-black" : "bg-gray-200 text-gray-600 cursor-not-allowed"
+            className={`px-4 py-2 rounded-xl text-sm font-medium transition-all duration-200 ${
+              remaining === 0 
+                ? "bg-green-600 text-white hover:bg-green-700 shadow-lg hover:shadow-xl" 
+                : "bg-gray-200 text-gray-600 cursor-not-allowed opacity-60"
             }`}
-            title={remaining === 0 ? "Writes these jar amounts into Monthly Budget" : "Allocate the full wallet first"}
+            title={
+              remaining === 0 
+                ? "Writes these jar amounts into Monthly Budget" 
+                : `Allocate the remaining £${remaining} first`
+            }
           >
-            <Check className="w-4 h-4" /> Apply to real budget
+            <Check className="w-4 h-4 mr-2" />
+            {remaining === 0 ? "Apply to real budget" : `Allocate £${remaining} first`}
           </button>
         </div>
       </div>
@@ -328,7 +367,7 @@ export default function DoodleBudget() {
                   return (
                     <div
                       key={c.id}
-                      className="rounded-2xl border bg-gradient-to-br from-white to-gray-50 p-4 shadow-[0_1px_0_rgba(0,0,0,0.02)]"
+                      className="rounded-2xl border bg-gradient-to-br from-white to-gray-50 p-4 pb-8 shadow-[0_1px_0_rgba(0,0,0,0.02)]"
                     >
                       <div className="flex items-center justify-between mb-2">
                         <div className="flex items-center gap-2 min-w-0">
@@ -353,15 +392,56 @@ export default function DoodleBudget() {
                         </div>
                       </div>
 
-                      {/* Jar visual */}
-                      <div className="h-20 rounded-xl border bg-white overflow-hidden relative mb-3">
-                        <div
-                          className="absolute bottom-0 left-0 right-0 bg-amber-200/70 transition-[height] duration-300"
-                          style={{ height: `${progress}%` }}
-                          aria-hidden
-                        />
-                        <div className="absolute inset-0 grid place-items-center text-[11px] text-gray-600">
-                          {target > 0 ? `${Math.round(progress)}%` : fmt0(val)}
+                      {/* Glass Jar visual - REPLACE your current jar visual with this */}
+                      <div className="h-20 relative mb-3 flex justify-center">
+                        {/* Glass jar container */}
+                        <div className="w-16 h-20 relative">
+                          {/* Jar neck */}
+                          <div className="absolute -top-1 left-1/2 transform -translate-x-1/2 w-4 h-2 bg-gradient-to-b from-blue-100 to-blue-200 rounded-t border border-blue-200/50"></div>
+                          
+                          {/* Main jar body */}
+                          <div className="w-full h-full bg-gradient-to-br from-blue-50/80 to-blue-100/80 rounded-b-2xl border-2 border-blue-200/50 shadow-inner backdrop-blur-sm relative overflow-hidden">
+                            
+                            {/* Money/coins inside jar */}
+                            <div className="absolute bottom-1 left-1/2 transform -translate-x-1/2 w-12 h-16 flex flex-wrap items-end justify-center p-0.5">
+                              {/* Generate coin stack based on amount */}
+                              {Array.from({ length: Math.min(6, Math.floor(val / 50) || 1) }).map((_, coinIdx) => (
+                                <div
+                                  key={coinIdx}
+                                  className={`w-2 h-1 bg-gradient-to-b from-yellow-300 to-yellow-600 rounded-full shadow-sm ${
+                                    coinIdx % 2 === 0 ? 'mr-0.5' : 'ml-0.5'
+                                  }`}
+                                  style={{ 
+                                    zIndex: coinIdx,
+                                    marginBottom: `${coinIdx * 0.5}px`,
+                                    transform: `rotate(${(coinIdx % 3 - 1) * 15}deg)`
+                                  }}
+                                />
+                              ))}
+                            </div>
+                            
+                            {/* Progress fill effect */}
+                            <div
+                              className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-yellow-100/30 to-yellow-200/20 transition-[height] duration-500 rounded-b-2xl"
+                              style={{ height: `${Math.min(progress, 85)}%` }}
+                            />
+                            
+                            {/* Category emoji */}
+                            <div className="absolute top-1 left-1/2 transform -translate-x-1/2 text-sm z-10">
+                              {c.emoji}
+                            </div>
+                            
+                            {/* Glass shine effect */}
+                            <div className="absolute inset-y-1 left-1 w-1 bg-gradient-to-b from-white/40 to-transparent rounded-full"></div>
+                          </div>
+                        </div>
+                        
+                        {/* Amount display below jar */}
+                        <div className="absolute -bottom-6 left-1/2 transform -translate-x-1/2 text-xs text-center">
+                          <div className="font-semibold">{fmt0(val)}</div>
+                          {target > 0 && (
+                            <div className="text-gray-500">{Math.round(progress)}%</div>
+                          )}
                         </div>
                       </div>
 

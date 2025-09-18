@@ -1,57 +1,56 @@
+// components/doodle/useDoodleEngine.ts
 "use client";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useEnhancedBudget } from "@/components/HouseholdBudgetProvider";
 
 export type Coin = 10 | 20 | 50 | 100;
 export const COINS: Coin[] = [10, 20, 50, 100];
-
-export type Draft = Record<string, number>;   // categoryId -> assigned amount
-export type Locked = Record<string, boolean>; // categoryId -> locked
+export type Draft = Record<string, number>;
+export type Locked = Record<string, boolean>;
 
 export function useDoodleEngine() {
   const { categories, updateCategory } = useEnhancedBudget();
-
-  // derived
+  
+  // Guard against empty categories
+  const safeCategories = categories || [];
+  
   const currentTotalBudget = useMemo(
-    () => categories.reduce((s, c) => s + (c.monthlyBudget || 0), 0),
-    [categories]
+    () => safeCategories.reduce((s, c) => s + (c.monthlyBudget || 0), 0),
+    [safeCategories]
   );
-
+  
   const [wallet, setWallet] = useState<number>(Math.max(500, Math.round(currentTotalBudget) || 1000));
   const [draft, setDraft] = useState<Draft>({});
   const [locked, setLocked] = useState<Locked>({});
   const [coin, setCoin] = useState<Coin>(50);
 
-  // seed hash so we only reseed when real budgets change
   const seedHash = useMemo(
-    () =>
-      categories
+    () => safeCategories
         .map((c) => `${c.id}:${Math.round((c.monthlyBudget || 0) * 100)}`)
         .sort()
         .join("|"),
-    [categories]
+    [safeCategories]
   );
 
   const seedFromCats = useMemo(() => {
     const base: Draft = {};
-    categories.forEach((c) => (base[c.id] = Math.round(c.monthlyBudget || 0)));
+    safeCategories.forEach((c) => (base[c.id] = Math.round(c.monthlyBudget || 0)));
     return base;
-  }, [seedHash, categories]);
+  }, [seedHash, safeCategories]);
 
   useEffect(() => {
-    if (Object.keys(draft).length === 0 && categories.length) {
+    if (Object.keys(draft).length === 0 && safeCategories.length > 0) {
       setDraft(seedFromCats);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [seedFromCats, categories.length]);
+  }, [seedFromCats, safeCategories.length, draft]);
 
   const assigned = useMemo(
     () => Object.values(draft).reduce((s, n) => s + (n || 0), 0),
     [draft]
   );
+  
   const remaining = Math.max(0, wallet - assigned);
 
-  // clamp a single jar so total never exceeds wallet
   const clampJar = useCallback(
     (id: string, value: number) => {
       const others = Object.entries(draft)
@@ -70,11 +69,11 @@ export function useDoodleEngine() {
 
   const toggleLock = (id: string) => setLocked((l) => ({ ...l, [id]: !l[id] }));
 
-  // weighted autospread by gap to target
   const autoSpreadRemaining = () => {
     let pool = remaining;
-    if (pool <= 0) return;
-    const unlocked = categories.filter((c) => !locked[c.id]);
+    if (pool <= 0 || safeCategories.length === 0) return;
+    
+    const unlocked = safeCategories.filter((c) => !locked[c.id]);
     if (!unlocked.length) return;
 
     const gaps = unlocked.map((c) => {
@@ -102,8 +101,13 @@ export function useDoodleEngine() {
   const resetToCurrent = () => setDraft(seedFromCats);
 
   const applyToRealBudget = async () => {
+    if (!updateCategory || safeCategories.length === 0) {
+      console.warn("Cannot apply budget - no categories or update function available");
+      return;
+    }
+
     const ops: Promise<void>[] = [];
-    for (const c of categories) {
+    for (const c of safeCategories) {
       const next = Math.round((draft[c.id] || 0) * 100) / 100;
       if (next !== (c.monthlyBudget || 0)) {
         ops.push(updateCategory(c.id, { monthlyBudget: next }));
@@ -113,7 +117,7 @@ export function useDoodleEngine() {
   };
 
   return {
-    categories,
+    categories: safeCategories,
     wallet, setWallet,
     draft, setDraft,
     locked, toggleLock,

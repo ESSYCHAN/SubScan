@@ -1,3 +1,6 @@
+// src/app/pdf-extractor/page.tsx
+
+
 'use client';
 import React, { useState } from 'react';
 import { Upload, Download, FileText, AlertCircle, Save, Check } from 'lucide-react';

@@ -1,3 +1,4 @@
+// components/doodle/EnvelopesSkin.tsx
 "use client";
 import React from "react";
 import { Mail, Coins, Wand2, RefreshCw, Check, Lock, Unlock } from "lucide-react";
@@ -105,17 +106,64 @@ export default function EnvelopesSkin() {
               </div>
 
               {/* Envelope visual */}
-              <div className="h-24 relative rounded-xl border bg-white overflow-hidden mb-3">
-                {/* flap */}
-                <div className="absolute inset-x-0 top-0 h-6 bg-gradient-to-b from-gray-200/70 to-transparent" />
-                {/* fill as stacked notes */}
-                <div className="absolute bottom-2 left-2 right-2 flex flex-wrap gap-1">
-                  {Array.from({ length: Math.max(1, Math.floor(pct / 20)) }).map((_, i) => (
-                    <div key={i} className="h-4 flex-1 min-w-[20%] bg-sky-100 border border-sky-200 rounded-sm" />
-                  ))}
-                </div>
-                <div className="absolute inset-0 grid place-items-center text-[11px] text-gray-600">
-                  {target ? `${Math.round(pct)}%` : f0(val)}
+              {/* Enhanced Envelope visual - REPLACE your current envelope visual */}
+              <div className="h-24 relative rounded-xl overflow-hidden mb-3">
+                {/* Envelope body */}
+                <div className="absolute inset-0 bg-gradient-to-br from-blue-50 to-blue-100 border-2 border-blue-200/60 rounded-xl shadow-inner">
+                  
+                  {/* Envelope flap - animated based on fullness */}
+                  <div 
+                    className="absolute inset-x-0 top-0 bg-gradient-to-b from-blue-200 to-blue-300 border-b border-blue-300 transition-all duration-500"
+                    style={{ 
+                      height: pct > 80 ? '8px' : '20px', // Flap closes as envelope fills
+                      borderRadius: pct > 80 ? '12px 12px 4px 4px' : '12px 12px 8px 8px'
+                    }}
+                  />
+                  
+                  {/* Money/cash sticking out */}
+                  <div className="absolute bottom-2 left-2 right-2 flex flex-wrap items-end gap-0.5">
+                    {/* Generate cash bills based on amount */}
+                    {Array.from({ 
+                      length: Math.min(8, Math.floor(val / 50) + 1) 
+                    }).map((_, i) => (
+                      <div
+                        key={i}
+                        className="bg-gradient-to-b from-green-200 to-green-400 border border-green-300 rounded-sm shadow-sm transition-all duration-300"
+                        style={{
+                          width: `${12 + (i % 3) * 2}px`,
+                          height: `${14 + (i % 2) * 4}px`,
+                          transform: `translateY(${-i * 2}px) rotate(${(i % 3 - 1) * 8}deg)`,
+                          zIndex: i,
+                          opacity: pct > (i * 12.5) ? 1 : 0.3
+                        }}
+                      >
+                        {/* £ symbol on bills */}
+                        <div className="text-[8px] text-green-700 font-bold text-center leading-3">
+                          £
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  
+                  {/* Category emoji on envelope */}
+                  <div className="absolute top-6 right-3 text-lg opacity-60">
+                    {c.emoji}
+                  </div>
+                  
+                  {/* Amount display */}
+                  <div className="absolute bottom-1 left-1 text-[10px] font-medium text-blue-700">
+                    {f0(val)}
+                  </div>
+                  
+                  {/* Progress indicator */}
+                  {target > 0 && (
+                    <div className="absolute top-1 left-1 text-[10px] text-blue-600 font-medium">
+                      {Math.round(pct)}%
+                    </div>
+                  )}
+                  
+                  {/* Envelope shine effect */}
+                  <div className="absolute top-2 left-2 w-1 h-6 bg-gradient-to-b from-white/50 to-transparent rounded-full" />
                 </div>
               </div>
 

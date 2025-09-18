@@ -1,5 +1,4 @@
 // components/HomeBudgetExtensions.tsx
-// components/HomeBudgetExtensions.tsx
 "use client";
 
 import React, { useMemo, useState } from "react";
@@ -130,7 +129,7 @@ function BudgetOverview() {
     const essentialBudget = essential.reduce((s, c) => s + (c.monthlyBudget || 0), 0);
 
     return { totalBudget, totalSpent, remaining, essentialSpent, essentialBudget };
-  }, [categories]);
+  }, [categories, goals]);
 
   const gbp = (n: number) => `£${(n || 0).toFixed(2)}`;
 
@@ -199,6 +198,213 @@ function BudgetOverview() {
   );
 }
 
+/* ----------------------- Monthly Review Component ----------------------- */
+interface InsightItem {
+  name: string;
+  emoji: string;
+  variance: number;
+  percentVar: number;
+  status: 'on-track' | 'over' | 'under';
+  budgeted: number;
+  spent: number;
+}
+
+function MonthlyReview() {
+  const { categories, budgetPeriods, currentMonth } = useEnhancedBudget();
+  
+  const lastMonth = useMemo(() => {
+    const date = new Date();
+    date.setMonth(date.getMonth() - 1);
+    return date.toISOString().slice(0, 7);
+  }, []);
+
+  const lastMonthData = budgetPeriods[lastMonth];
+  const gbp = (n: number) => `£${(n || 0).toFixed(2)}`;
+  
+  // Show welcome message if no historical data
+  if (!lastMonthData) {
+    return (
+      <div className="bg-gradient-to-r from-blue-50 to-purple-50 rounded-2xl p-6 text-center border border-blue-100 mb-6">
+        <div className="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4">
+          <BarChart3 className="w-8 h-8 text-blue-600" />
+        </div>
+        <h3 className="text-lg font-semibold text-blue-900 mb-2">Welcome to Monthly Budgeting</h3>
+        <p className="text-blue-700">Complete your first month to see performance insights and spending patterns here.</p>
+      </div>
+    );
+  }
+
+  // Calculate insights from last month's data
+  const insights: InsightItem[] = useMemo(() => {
+    return categories.map(cat => {
+      const lastMonthCat = lastMonthData.categories[cat.id];
+      if (!lastMonthCat) return null;
+      
+      const { budgeted, spent } = lastMonthCat;
+      const variance = spent - budgeted;
+      const percentVar = budgeted > 0 ? (variance / budgeted) * 100 : 0;
+      
+      return {
+        name: cat.name,
+        emoji: cat.emoji,
+        variance,
+        percentVar,
+        budgeted,
+        spent,
+        status: Math.abs(percentVar) < 5 ? 'on-track' : percentVar > 0 ? 'over' : 'under'
+      };
+    })
+    .filter((insight): insight is InsightItem => insight !== null)
+    .sort((a, b) => Math.abs(b.variance) - Math.abs(a.variance));
+  }, [categories, lastMonthData]);
+
+  // Calculate totals
+  const totals = useMemo(() => {
+    const totalBudgeted = insights.reduce((sum, i) => sum + i.budgeted, 0);
+    const totalSpent = insights.reduce((sum, i) => sum + i.spent, 0);
+    const totalVariance = totalSpent - totalBudgeted;
+    const onTrackCount = insights.filter(i => i.status === 'on-track').length;
+    
+    return { totalBudgeted, totalSpent, totalVariance, onTrackCount };
+  }, [insights]);
+
+  const lastMonthName = useMemo(() => {
+    return new Date(lastMonth + '-01').toLocaleDateString('en-GB', { 
+      year: 'numeric', 
+      month: 'long' 
+    });
+  }, [lastMonth]);
+
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case 'on-track': return 'text-green-600 bg-green-50 border-green-200';
+      case 'over': return 'text-red-600 bg-red-50 border-red-200';
+      case 'under': return 'text-blue-600 bg-blue-50 border-blue-200';
+      default: return 'text-gray-600 bg-gray-50 border-gray-200';
+    }
+  };
+
+  const getStatusText = (status: string) => {
+    switch (status) {
+      case 'on-track': return 'On Track';
+      case 'over': return 'Over Budget';
+      case 'under': return 'Under Budget';
+      default: return 'Unknown';
+    }
+  };
+
+  const getOverallStatus = () => {
+    const variancePercent = Math.abs(totals.totalVariance) / totals.totalBudgeted * 100;
+    if (variancePercent < 5) return { text: 'Great job staying on budget!', icon: '🎯', color: 'from-green-500 to-green-600' };
+    if (totals.totalVariance > 0) return { text: 'You went over budget this month', icon: '⚠️', color: 'from-red-500 to-red-600' };
+    return { text: 'You spent less than budgeted', icon: '💰', color: 'from-blue-500 to-blue-600' };
+  };
+
+  const overallStatus = getOverallStatus();
+
+  return (
+    <div className="rounded-2xl bg-white/90 backdrop-blur border border-gray-100 shadow-sm mb-6">
+      {/* Header */}
+      <div className="p-6 border-b border-gray-100">
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="text-xl font-semibold text-gray-900 flex items-center gap-2">
+              <TrendingUp className="w-5 h-5 text-gray-600" />
+              {lastMonthName} Performance
+            </h3>
+            <p className="text-sm text-gray-600 mt-1">
+              {totals.onTrackCount} of {insights.length} categories stayed on track
+            </p>
+          </div>
+          
+          <div className="text-right">
+            <div className={`text-2xl font-bold ${totals.totalVariance >= 0 ? 'text-red-600' : 'text-green-600'}`}>
+              {totals.totalVariance >= 0 ? '+' : ''}{gbp(totals.totalVariance)}
+            </div>
+            <div className="text-sm text-gray-500">
+              {gbp(totals.totalSpent)} of {gbp(totals.totalBudgeted)}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Overall Status Banner */}
+      <div className="px-6 py-4">
+        <div className={`bg-gradient-to-r ${overallStatus.color} rounded-xl p-4 text-white text-center`}>
+          <div className="font-medium text-lg">
+            {overallStatus.icon} {overallStatus.text}
+          </div>
+        </div>
+      </div>
+
+      {/* Category Insights */}
+      <div className="px-6 pb-6">
+        <h4 className="font-semibold text-gray-900 mb-4">Category Breakdown</h4>
+        <div className="space-y-3">
+          {insights.slice(0, 5).map((insight, idx) => (
+            <div key={idx} className="flex items-center justify-between p-3 rounded-lg bg-gray-50 hover:bg-gray-100 transition-colors">
+              <div className="flex items-center gap-3">
+                <span className="text-xl">{insight.emoji}</span>
+                <div>
+                  <div className="font-medium text-gray-900">{insight.name}</div>
+                  <div className="text-sm text-gray-500">
+                    {gbp(insight.spent)} of {gbp(insight.budgeted)}
+                  </div>
+                </div>
+              </div>
+              
+              <div className="text-right flex items-center gap-2">
+                <div>
+                  <div className={`font-semibold ${
+                    insight.status === 'on-track' ? 'text-green-600' :
+                    insight.status === 'over' ? 'text-red-600' : 'text-blue-600'
+                  }`}>
+                    {insight.variance > 0 ? '+' : ''}{gbp(insight.variance)}
+                  </div>
+                  <div className="text-xs text-gray-500">
+                    {insight.percentVar > 0 ? '+' : ''}{insight.percentVar.toFixed(1)}%
+                  </div>
+                </div>
+                
+                <span className={`px-2 py-1 rounded-full text-xs font-medium border ${getStatusColor(insight.status)}`}>
+                  {getStatusText(insight.status)}
+                </span>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Quick Insights */}
+        {insights.length > 0 && (
+          <div className="mt-6 p-4 bg-blue-50 rounded-lg border border-blue-100">
+            <h5 className="font-medium text-blue-900 mb-2 flex items-center gap-1">
+              <AlertCircle className="w-4 h-4" />
+              Quick Insights
+            </h5>
+            <ul className="text-sm text-blue-700 space-y-1">
+              {insights.filter(i => i.status === 'over').length > 0 && (
+                <li>
+                  • Watch your {insights.filter(i => i.status === 'over')[0].name.toLowerCase()} spending - 
+                  biggest overspend at {gbp(insights.filter(i => i.status === 'over')[0].variance)}
+                </li>
+              )}
+              {insights.filter(i => i.status === 'under').length > 0 && (
+                <li>
+                  • Consider reallocating from {insights.filter(i => i.status === 'under')[0].name.toLowerCase()} - 
+                  {gbp(Math.abs(insights.filter(i => i.status === 'under')[0].variance))} unspent
+                </li>
+              )}
+              {totals.onTrackCount === insights.length && (
+                <li>• Perfect month! All categories stayed within budget</li>
+              )}
+            </ul>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /* ----------------------- Category Manager ----------------------- */
 function CategoryManager() {
   const { categories, updateCategory, deleteCategory, createCategory } = useEnhancedBudget();
@@ -215,19 +421,33 @@ function CategoryManager() {
     return "bg-green-50 border-green-200";
   };
 
-  const handleSave = async () => {
-    if (newCategory.name && typeof newCategory.monthlyBudget === "number") {
+  const handleSave = async (presetData?: any) => {
+    const dataToSave = presetData || {
+      name: newCategory.name,
+      emoji: newCategory.emoji || "💰",
+      type: newCategory.type || "essential",
+      monthlyBudget: newCategory.monthlyBudget || 0
+    };
+
+    if (!dataToSave.name || typeof dataToSave.monthlyBudget !== "number") {
+      alert("Please fill in category name and budget amount");
+      return;
+    }
+
+    try {
       await createCategory({
-        name: newCategory.name,
-        emoji: newCategory.emoji || "💰",
-        color: newCategory.color || "#6366f1",
-        type: (newCategory.type as BudgetCategory["type"]) || "essential",
-        monthlyBudget: newCategory.monthlyBudget,
-        // NOTE: 'spent' is derived in provider, not persisted
-        description: newCategory.description || "",
-      } as any);
+        name: dataToSave.name,
+        emoji: dataToSave.emoji,
+        color: "#6366f1",
+        type: dataToSave.type,
+        monthlyBudget: dataToSave.monthlyBudget,
+        description: "",
+      });
       setNewCategory({});
       setShowAddForm(false);
+    } catch (error) {
+      console.error("Failed to create category:", error);
+      alert("Failed to create category. Check console for details.");
     }
   };
 
@@ -244,40 +464,43 @@ function CategoryManager() {
     >
       {showAddForm && (
         <div className="mb-4 p-4 rounded-xl border border-gray-200 bg-gray-50">
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-3">
+          <div className="grid grid-cols-1 gap-3 mb-3">
             <input
               className="px-3 py-2 rounded-lg border border-gray-200 text-sm"
-              placeholder="Category name"
+              placeholder="Category name (e.g., Groceries)"
               value={newCategory.name || ""}
               onChange={(e) => setNewCategory((p) => ({ ...p, name: e.target.value }))}
+              autoFocus
             />
-            <input
-              className="px-3 py-2 rounded-lg border border-gray-200 text-sm text-center"
-              placeholder="🏠"
-              value={newCategory.emoji || ""}
-              onChange={(e) => setNewCategory((p) => ({ ...p, emoji: e.target.value }))}
-            />
-            <input
-              type="number"
-              className="px-3 py-2 rounded-lg border border-gray-200 text-sm"
-              placeholder="Monthly budget"
-              value={newCategory.monthlyBudget ?? ""}
-              onChange={(e) => setNewCategory((p) => ({ ...p, monthlyBudget: Number(e.target.value) }))}
-            />
-            <select
-              className="px-3 py-2 rounded-lg border border-gray-200 text-sm"
-              value={newCategory.type || "essential"}
-              onChange={(e) => setNewCategory((p) => ({ ...p, type: e.target.value as any }))}
-            >
-              <option value="essential">Essential</option>
-              <option value="lifestyle">Lifestyle</option>
-              <option value="savings">Savings</option>
-              <option value="debt">Debt</option>
-            </select>
+            <div className="grid grid-cols-3 gap-3">
+              <input
+                className="px-3 py-2 rounded-lg border border-gray-200 text-sm text-center"
+                placeholder="🛒"
+                value={newCategory.emoji || ""}
+                onChange={(e) => setNewCategory((p) => ({ ...p, emoji: e.target.value }))}
+              />
+              <input
+                type="number"
+                className="px-3 py-2 rounded-lg border border-gray-200 text-sm"
+                placeholder="Monthly budget"
+                value={newCategory.monthlyBudget ?? ""}
+                onChange={(e) => setNewCategory((p) => ({ ...p, monthlyBudget: parseFloat(e.target.value) || 0 }))}
+              />
+              <select
+                className="px-3 py-2 rounded-lg border border-gray-200 text-sm"
+                value={newCategory.type || "essential"}
+                onChange={(e) => setNewCategory((p) => ({ ...p, type: e.target.value as any }))}
+              >
+                <option value="essential">Essential</option>
+                <option value="lifestyle">Lifestyle</option>
+                <option value="savings">Savings</option>
+                <option value="debt">Debt</option>
+              </select>
+            </div>
           </div>
           <div className="flex gap-2 justify-end">
             <SecondaryButton onClick={() => setShowAddForm(false)}>Cancel</SecondaryButton>
-            <PrimaryButton onClick={handleSave}>Add Category</PrimaryButton>
+            <PrimaryButton onClick={() => handleSave()}>Add Category</PrimaryButton>
           </div>
         </div>
       )}
@@ -616,69 +839,57 @@ function MortgageTab() {
 /* ----------------------- Unwrapped panel ----------------------- */
 export function EnhancedHomeBudgetPanelUnwrapped() {
   const [tab, setTab] = useState<TabKey>("budget");
-
+  
   return (
-    <div className="space-y-4" id="budget">
-      <div className="inline-flex rounded-xl border bg-white overflow-hidden">
-        <button
-          onClick={() => setTab("budget")}
-          className={`px-4 py-2 text-sm ${tab === "budget" ? "bg-gray-900 text-white" : "hover:bg-gray-50"}`}
-        >
-          Budget
-        </button>
-        <button
-          onClick={() => setTab("mortgage")}
-          className={`px-4 py-2 text-sm border-l ${tab === "mortgage" ? "bg-gray-900 text-white" : "hover:bg-gray-50"}`}
-        >
-          Mortgage
-        </button>
-        <button
-          onClick={() => setTab("doodle")}
-          className={`px-4 py-2 text-sm border-l ${tab === "doodle" ? "bg-gray-900 text-white" : "hover:bg-gray-50"}`}
-        >
-          Doodle
-        </button>
-        <button
-          onClick={() => setTab("envelopes")}
-          className={`px-4 py-2 text-sm border-l ${tab === "envelopes" ? "bg-gray-900 text-white" : "hover:bg-gray-50"}`}
-        >
-          Envelopes
-        </button>
-        <button
-          onClick={() => setTab("plants")}
-          className={`px-4 py-2 text-sm border-l ${tab === "plants" ? "bg-gray-900 text-white" : "hover:bg-gray-50"}`}
-        >
-          Plants
-        </button>
-        <button
-          onClick={() => setTab("team")}
-          className={`px-4 py-2 text-sm border-l ${tab === "team" ? "bg-gray-900 text-white" : "hover:bg-gray-50"}`}
-        >
-          Team
-        </button>
+    <div className="space-y-6 mt-8" id="budget">
+      {/* Tab Navigation - Styled like mockup */}
+      <div className="flex justify-center">
+        <div className="inline-flex rounded-2xl bg-white/90 backdrop-blur p-1 shadow-xl border border-white/50">
+          {[
+            { key: "budget", label: "Budget", icon: "📊" },
+            { key: "mortgage", label: "Mortgage", icon: "🏠" },
+            { key: "doodle", label: "Doodle", icon: "🎨" },
+            { key: "envelopes", label: "Envelopes", icon: "✉️" },
+            { key: "plants", label: "Plants", icon: "🌱" },
+            { key: "team", label: "Team", icon: "👥" }
+          ].map(({ key, label, icon }) => (
+            <button
+              key={key}
+              onClick={() => setTab(key as TabKey)}
+              className={`flex items-center gap-2 px-6 py-3 text-sm font-medium rounded-xl transition-all ${
+                tab === key 
+                  ? "bg-gradient-to-r from-purple-500 to-pink-500 text-white shadow-lg" 
+                  : "text-gray-600 hover:text-gray-900 hover:bg-white/50"
+              }`}
+            >
+              <span className="text-lg">{icon}</span>
+              {label}
+            </button>
+          ))}
+        </div>
       </div>
 
-      {tab === "budget" && (
-        <div className="space-y-6">
-          <BudgetOverview />
-          <GroupedBudgetSheet />
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            <div className="lg:col-span-2">
-              <QuickExpenseEntry />
-            </div>
-            <div>
-              <SavingsGoals />
+      {/* Tab Content */}
+      <div className="min-h-[600px]">
+        {tab === "budget" && (
+          <div className="space-y-6">
+            <BudgetOverview />
+            <MonthlyReview />
+            <GroupedBudgetSheet />
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              <div>
+                <SavingsGoals />
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        )}
 
-      {tab === "mortgage" && <MortgageTab />}
-
-      {tab === "doodle" && <DoodleBudget />}
-      {tab === "envelopes" && <EnvelopesSkin />}
-      {tab === "plants" && <PlantsSkin />}
-      {tab === "team" && <TeamSkin />}
+        {tab === "mortgage" && <MortgageTab />}
+        {tab === "doodle" && <DoodleBudget />}
+        {tab === "envelopes" && <EnvelopesSkin />}
+        {tab === "plants" && <PlantsSkin />}
+        {tab === "team" && <TeamSkin />}
+      </div>
     </div>
   );
 }

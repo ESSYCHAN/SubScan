@@ -1,3 +1,5 @@
+//lib/subscriptionService.ts
+
 import { 
   collection, 
   doc, 

@@ -1,3 +1,4 @@
+// components/FileUpload.tsx
 'use client';
 import { useState, useCallback } from 'react';
 import { Upload, FileText, AlertCircle, CheckCircle, Loader2 } from 'lucide-react';

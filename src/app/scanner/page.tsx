@@ -1,3 +1,5 @@
+// src/app/scanner/page.tsx
+
 'use client';
 import React, { useState, useCallback } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
@@ -52,7 +54,22 @@ interface ProcessedTransaction extends TransactionRow {
 // HELPERS: DATES & STRING NORMALIZATION
 // ──────────────────────────────────────────────────────────────────────────────
 const MONTHS = ['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'] as const;
-
+const calculateNextBillingForScanner = (lastSeen: string): string => {
+  const today = new Date();
+  const currentYear = today.getFullYear();
+  const currentMonth = today.getMonth();
+  
+  const historicalDate = new Date(lastSeen);
+  const billingDay = isNaN(historicalDate.getTime()) ? 1 : historicalDate.getDate();
+  
+  const nextBilling = new Date(currentYear, currentMonth, billingDay);
+  
+  if (nextBilling < today) {
+    nextBilling.setMonth(nextBilling.getMonth() + 1);
+  }
+  
+  return nextBilling.toISOString().slice(0, 10);
+};
 function parseLeadingStatementDate(line: string, fallbackYear?: number): string | null {
   const m = line.match(/^\s*(\d{1,2})(st|nd|rd|th)\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\b/i);
   if (!m) return null;
@@ -761,15 +778,15 @@ export default function ScannerPageV8() {
                 originalName: sub.originalDescription || sub.description || 'Unknown',
                 cost: sub.amount,
                 billingCycle: 'monthly',
-                nextBilling: calculateNextBilling(sub.date),
+                nextBilling: calculateNextBillingForScanner(sub.date), // Use the new function
                 category: categorizeSubscription(sub.merchantName),
-                lastUsed: sub.date,
+                lastUsed: new Date().toISOString().slice(0, 10), // TODAY, not historical
                 usageFrequency: (estimateUsage(sub.merchantName) as any),
-                signUpDate: sub.date,
+                signUpDate: new Date().toISOString().slice(0, 10), // TODAY, not historical
                 source: 'bank_scan',
                 confidence: sub.confidence,
                 risk: (calculateRisk(sub) as any),
-                daysSinceUsed: calculateDaysSince(sub.date),
+                daysSinceUsed: 0, // Reset to 0 since we're anchoring to today
                 createdAt: Timestamp.fromDate(now),
                 updatedAt: Timestamp.fromDate(now)
               };

@@ -1,3 +1,5 @@
+// components/doodle/TeamSkin.tsx
+
 "use client";
 import React, { useEffect, useMemo, useState } from "react";
 import { Users, Coins, Wand2, RefreshCw, Check, Lock, Unlock } from "lucide-react";

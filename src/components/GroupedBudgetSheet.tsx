@@ -1,389 +1,341 @@
 // components/GroupedBudgetSheet.tsx
-// components/GroupedBudgetSheet.tsx
+// src/components/GroupedBudgetSheet.tsx
+// Complete enhanced version with monthly periods support
+
 "use client";
 
-import React, { useMemo, useState } from "react";
-import { ChevronDown, ChevronRight, Plus, Filter, X, AlertTriangle } from "lucide-react";
+import React, { useState, useMemo } from 'react';
+import { useEnhancedBudget } from '@/components/HouseholdBudgetProvider';
+import { Calendar, ChevronDown } from 'lucide-react';
 
-import { useEnhancedBudget, type BudgetCategory } from "@/components/HouseholdBudgetProvider";
+const gbp = (n: number) => `£${(n || 0).toFixed(2)}`;
 
-const fmt = (n: number) => `£${(n || 0).toFixed(2)}`;
+// Month Selector Component
+function MonthSelector() {
+  const { currentMonth, budgetPeriods, startNewMonth } = useEnhancedBudget();
+  const [viewMonth, setViewMonth] = useState(currentMonth);
+  const [isOpen, setIsOpen] = useState(false);
 
-const groups: Array<{ key: BudgetCategory["type"]; label: string }> = [
-  { key: "essential", label: "Essentials" },
-  { key: "lifestyle", label: "Lifestyle" },
-  { key: "savings", label: "Savings" },
-  { key: "debt", label: "Debt" },
-];
-
-type FilterState = {
-  showOver?: boolean;
-  showUnused?: boolean;
-  query?: string;
-};
-
-export default function GroupedBudgetSheet() {
-  const { categories, updateCategory, deleteCategory, createCategory } = useEnhancedBudget();
-
-  // UI state
-  const [open, setOpen] = useState<Record<BudgetCategory["type"], boolean>>({
-    essential: true,
-    lifestyle: true,
-    savings: true,
-    debt: true,
-  });
-  const [filters, setFilters] = useState<FilterState>({ showOver: false, showUnused: false, query: "" });
-
-  // Derived totals overall
-  const overall = useMemo(() => {
-    const totalBudget = categories.reduce((s, c) => s + (c.monthlyBudget || 0), 0);
-    const totalSpent = categories.reduce((s, c) => s + (c.spent || 0), 0);
-    return { totalBudget, totalSpent, remaining: totalBudget - totalSpent };
-  }, [categories]);
-
-  // Filtered by chips / search
-  const filtered = useMemo(() => {
-    let list = categories;
-    if (filters.query?.trim()) {
-      const q = filters.query.toLowerCase();
-      list = list.filter((c) => `${c.name} ${c.type}`.toLowerCase().includes(q));
+  // Available months for dropdown
+  const monthOptions = useMemo(() => {
+    const months = Object.keys(budgetPeriods).sort().slice(-12); // Last 12 months
+    if (!months.includes(currentMonth)) {
+      months.push(currentMonth);
     }
-    if (filters.showOver) list = list.filter((c) => (c.spent || 0) > (c.monthlyBudget || 0));
-    if (filters.showUnused) list = list.filter((c) => (c.spent || 0) === 0);
-    return list;
-  }, [categories, filters]);
+    return months.sort().reverse(); // Most recent first
+  }, [budgetPeriods, currentMonth]);
 
-  // Group rows
-  const rowsByGroup = useMemo(() => {
-    const map: Record<BudgetCategory["type"], BudgetCategory[]> = {
-      essential: [],
-      lifestyle: [],
-      savings: [],
-      debt: [],
-    };
-    filtered.forEach((c) => map[c.type].push(c));
-    return map;
-  }, [filtered]);
-
-  const statusPill = (c: BudgetCategory) => {
-    const b = c.monthlyBudget || 0;
-    const s = c.spent || 0;
-    if (b === 0 && s === 0) {
-      return <span className="px-2 py-0.5 rounded-full text-xs bg-gray-100 text-gray-600">Unbudgeted</span>;
+  const formatMonthName = (monthStr: string) => {
+    try {
+      return new Date(monthStr + '-01').toLocaleDateString('en-GB', { 
+        year: 'numeric', 
+        month: 'long' 
+      });
+    } catch {
+      return monthStr;
     }
-    if (s <= b * 0.75) {
-      return <span className="px-2 py-0.5 rounded-full text-xs bg-emerald-100 text-emerald-700">On track</span>;
-    }
-    if (s <= b) {
-      return <span className="px-2 py-0.5 rounded-full text-xs bg-amber-100 text-amber-700">Tight</span>;
-    }
-    return (
-      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-rose-100 text-rose-700">
-        <AlertTriangle className="w-3 h-3" />
-        Over
-      </span>
-    );
   };
 
-  const quickAddPresets: Record<
-    BudgetCategory["type"],
-    Array<{ name: string; emoji: string; hint?: string; budget?: number }>
-  > = {
-    essential: [
-      { name: "Groceries & Food", emoji: "🛒", hint: "Weekly shop & meal prep", budget: 400 },
-      { name: "Utilities (Gas/Electric)", emoji: "⚡", hint: "Energy bills", budget: 120 },
-      { name: "Internet & Phone", emoji: "📶", hint: "Broadband & mobile", budget: 60 },
-    ],
-    lifestyle: [
-      { name: "Dining Out", emoji: "🍽️", hint: "Restaurants & coffee", budget: 150 },
-      { name: "Subscriptions", emoji: "📺", hint: "Streaming & apps", budget: 80 },
-    ],
-    savings: [
-      { name: "Emergency Fund", emoji: "🆘", hint: "3–6 months buffer", budget: 200 },
-      { name: "Holiday", emoji: "✈️", hint: "Trips & breaks", budget: 100 },
-    ],
-    debt: [{ name: "Credit Card", emoji: "💳", hint: "Monthly payment", budget: 150 }],
-  };
+  // Check if we can start a new month (end of current month)
+  const canStartNewMonth = useMemo(() => {
+    const now = new Date();
+    const isEndOfMonth = now.getDate() > 25; // Last week of month
+    const isCurrentMonth = viewMonth === currentMonth;
+    return isCurrentMonth && isEndOfMonth;
+  }, [viewMonth, currentMonth]);
 
-  async function quickAdd(
-    type: BudgetCategory["type"],
-    preset: { name: string; emoji: string; hint?: string; budget?: number }
-  ) {
-    await createCategory({
-      name: preset.name,
-      emoji: preset.emoji,
-      color: "#6366f1",
-      type,
-      monthlyBudget: preset.budget ?? 0,
-
-      description: preset.hint,
-    });
-  }
-
-  const Section = ({
-    type,
-    title,
-    items,
-  }: {
-    type: BudgetCategory["type"];
-    title: string;
-    items: BudgetCategory[];
-  }) => {
-    const subBudget = items.reduce((s, c) => s + (c.monthlyBudget || 0), 0);
-    const subSpent = items.reduce((s, c) => s + (c.spent || 0), 0);
-    const subRemain = subBudget - subSpent;
-
-    return (
-      <div className="rounded-2xl border bg-white overflow-hidden">
-        {/* Header */}
-        <button
-          className="w-full flex items-center justify-between px-4 py-3 bg-gray-50 border-b"
-          onClick={() => setOpen((o) => ({ ...o, [type]: !o[type] }))}
-        >
-          <div className="flex items-center gap-2">
-            {open[type] ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
-            <span className="font-semibold text-gray-900">{title}</span>
-            <span className="ml-2 text-xs text-gray-600">
-              {fmt(subSpent)} / {fmt(subBudget)} • <b>{fmt(subRemain)}</b> left
-            </span>
-          </div>
-          <div className="text-xs text-gray-500">Subtotal</div>
-        </button>
-
-        {/* Body */}
-        {open[type] && (
-          <div className="relative">
-            <div className="overflow-auto">
-              <table className="w-full text-sm">
-                <thead className="sticky top-0 bg-white z-10">
-                  <tr className="text-left">
-                    <th className="px-4 py-2 w-8" />
-                    <th className="px-4 py-2">Category</th>
-                    <th className="px-4 py-2">Monthly Budget</th>
-                    <th className="px-4 py-2">Spent</th>
-                    <th className="px-4 py-2">Remaining</th>
-                    <th className="px-4 py-2">Status</th>
-                    <th className="px-4 py-2 w-10" />
-                  </tr>
-                </thead>
-                <tbody>
-                  {items.map((c) => {
-                    const remaining = (c.monthlyBudget || 0) - (c.spent || 0);
-                    const pct = c.monthlyBudget ? Math.min(100, (c.spent / c.monthlyBudget) * 100) : 0;
-
-                    return (
-                      <React.Fragment key={c.id}>
-                        <tr className="border-t align-middle">
-                          <td className="px-4 py-2 text-lg">{c.emoji}</td>
-                          <td className="px-4 py-2">
-                            <InlineEdit
-                              value={c.name}
-                              onSave={(v) => updateCategory(c.id, { name: v })}
-                              sub={c.description}
-                            />
-                          </td>
-                          <td className="px-4 py-2">
-                            <InlineEdit
-                              value={String(c.monthlyBudget ?? 0)}
-                              type="number"
-                              onSave={(v) => updateCategory(c.id, { monthlyBudget: Number(v || "0") })}
-                            />
-                          </td>
-                          <td className="px-4 py-2 text-gray-700">{fmt(c.spent || 0)}</td>
-                          <td className="px-4 py-2">{fmt(remaining)}</td>
-                          <td className="px-4 py-2">{statusPill(c)}</td>
-                          <td className="px-4 py-2 text-right">
-                            <button
-                              onClick={() => deleteCategory(c.id)}
-                              className="p-1 rounded hover:bg-gray-100 text-rose-600"
-                              title="Delete"
-                            >
-                              <X className="w-4 h-4" />
-                            </button>
-                          </td>
-                        </tr>
-
-                        {/* ✅ separate row for the progress bar */}
-                        <tr>
-                          <td colSpan={7} className="px-4 pb-3">
-                            <div className="mt-2 h-2 w-full bg-gray-100 rounded-full overflow-hidden">
-                              <div className="h-full bg-gray-900" style={{ width: `${pct}%` }} />
-                            </div>
-                          </td>
-                        </tr>
-                      </React.Fragment>
-                    );
-                  })}
-
-                  {/* Quick add presets */}
-                  <tr className="border-t bg-gray-50/60">
-                    <td className="px-4 py-2" />
-                    <td className="px-4 py-2" colSpan={5}>
-                      <div className="flex flex-wrap items-center gap-2 text-xs">
-                        <span className="text-gray-600">Quick add:</span>
-                        {quickAddPresets[type].map((p) => (
-                          <button
-                            key={p.name}
-                            onClick={() => quickAdd(type, p)}
-                            className="px-2 py-1 rounded-full border bg-white hover:bg-gray-50"
-                            title={p.hint}
-                          >
-                            <span className="mr-1">{p.emoji}</span>
-                            {p.name}
-                          </button>
-                        ))}
+  return (
+    <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center gap-3">
+        <h2 className="text-xl font-semibold text-gray-900">Monthly Budget</h2>
+        
+        {/* Month Dropdown */}
+        <div className="relative">
+          <button
+            onClick={() => setIsOpen(!isOpen)}
+            className="flex items-center gap-2 px-4 py-2 bg-gray-50 rounded-xl text-sm border border-gray-200 hover:bg-gray-100 transition-colors"
+          >
+            <Calendar className="w-4 h-4 text-gray-600" />
+            <span>{formatMonthName(viewMonth)}</span>
+            <ChevronDown className={`w-4 h-4 text-gray-600 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+          </button>
+          
+          {isOpen && (
+            <div className="absolute top-full left-0 mt-2 w-48 bg-white rounded-xl shadow-lg border border-gray-200 z-10">
+              <div className="py-2">
+                {monthOptions.map(month => {
+                  const isCurrent = month === currentMonth;
+                  const isSelected = month === viewMonth;
+                  
+                  return (
+                    <button
+                      key={month}
+                      onClick={() => {
+                        setViewMonth(month);
+                        setIsOpen(false);
+                      }}
+                      className={`w-full text-left px-4 py-2 text-sm hover:bg-gray-50 transition-colors ${
+                        isSelected ? 'bg-blue-50 text-blue-700 font-medium' : 'text-gray-900'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span>{formatMonthName(month)}</span>
+                        {isCurrent && (
+                          <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded">
+                            Current
+                          </span>
+                        )}
                       </div>
-                    </td>
-                    <td className="px-4 py-2 text-right">
-                      <button
-                        onClick={() => quickAdd(type, { name: "New category", emoji: "💰", budget: 0 })}
-                        className="px-2 py-1 rounded-lg border bg-white hover:bg-gray-50 text-sm"
-                      >
-                        <Plus className="w-4 h-4 inline -mt-0.5 mr-1" />
-                        Add
-                      </button>
-                    </td>
-                  </tr>
-                </tbody>
-
-                {/* Sticky footer (section subtotal) */}
-                <tfoot className="sticky bottom-0 bg-white border-t">
-                  <tr>
-                    <td className="px-4 py-2" />
-                    <td className="px-4 py-2 text-sm text-gray-600">Section subtotal</td>
-                    <td className="px-4 py-2 font-medium">{fmt(subBudget)}</td>
-                    <td className="px-4 py-2 font-medium">{fmt(subSpent)}</td>
-                    <td className="px-4 py-2 font-medium">{fmt(subRemain)}</td>
-                    <td className="px-4 py-2" />
-                    <td className="px-4 py-2" />
-                  </tr>
-                </tfoot>
-              </table>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
-          </div>
+          )}
+        </div>
+
+        {viewMonth !== currentMonth && (
+          <span className="text-sm text-gray-500 bg-gray-100 px-3 py-1 rounded-full">
+            Historical View
+          </span>
         )}
       </div>
-    );
-  };
 
-  return (
-    <div className="rounded-2xl bg-white/90 backdrop-blur border border-gray-100 shadow-sm p-5 space-y-4">
-      {/* Header / filters */}
-      <div className="flex flex-col sm:flex-row gap-2 sm:items-center sm:justify-between">
-        <div className="font-semibold text-gray-900">Budget (grouped)</div>
-        <div className="flex flex-wrap gap-2 items-center">
-          <div className="relative">
-            <Filter className="w-4 h-4 absolute left-2 top-2.5 text-gray-400" />
-            <input
-              placeholder="Search category…"
-              className="pl-8 pr-3 py-2 bg-gray-50 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              value={filters.query}
-              onChange={(e) => setFilters((f) => ({ ...f, query: e.target.value }))}
-            />
-          </div>
-          <Toggle
-            checked={!!filters.showOver}
-            onChange={(v) => setFilters((f) => ({ ...f, showOver: v }))}
-            label="Only over-budget"
-          />
-          <Toggle
-            checked={!!filters.showUnused}
-            onChange={(v) => setFilters((f) => ({ ...f, showUnused: v }))}
-            label="Only unused"
-          />
-        </div>
-      </div>
-
-      {/* Overall KPI */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-        <KPI label="Monthly Budget" value={fmt(overall.totalBudget)} />
-        <KPI label="Spent" value={fmt(overall.totalSpent)} />
-        <KPI label="Remaining" value={fmt(overall.remaining)} />
-      </div>
-
-      {/* Sections */}
-      <div className="space-y-4">
-        {groups.map((g) => {
-          const items = rowsByGroup[g.key];
-          if (!items?.length) return null;
-          return <Section key={g.key} type={g.key} title={g.label} items={items} />;
-        })}
-      </div>
-    </div>
-  );
-}
-
-/* ----------------------------- little helpers ----------------------------- */
-
-function InlineEdit({
-  value,
-  onSave,
-  type = "text",
-  sub,
-}: {
-  value: string;
-  onSave: (v: string) => void;
-  type?: "text" | "number";
-  sub?: string;
-}) {
-  const [editing, setEditing] = useState(false);
-  const [v, setV] = useState(value);
-
-  const commit = () => {
-    setEditing(false);
-    if (v !== value) onSave(v);
-  };
-
-  return (
-    <div>
-      {editing ? (
-        <input
-          autoFocus
-          className="w-full border rounded px-2 py-1 text-sm"
-          value={v}
-          onChange={(e) => setV(e.target.value)}
-          onBlur={commit}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" || e.key === "Tab") commit();
-            if (e.key === "Escape") {
-              setV(value);
-              setEditing(false);
-            }
-          }}
-          type={type}
-        />
-      ) : (
+      {/* New Month Button */}
+      {canStartNewMonth && (
         <button
-          className="w-full text-left hover:bg-gray-50 rounded px-1"
-          onClick={() => setEditing(true)}
-          title="Click to edit"
+          onClick={startNewMonth}
+          className="px-4 py-2 bg-blue-600 text-white rounded-xl text-sm font-medium hover:bg-blue-700 transition-colors"
         >
-          <div className="font-medium">{value}</div>
-          {sub && <div className="text-xs text-gray-500 truncate">{sub}</div>}
+          Start Next Month
         </button>
       )}
     </div>
   );
 }
 
-function KPI({ label, value }: { label: string; value: string }) {
+// Summary Cards Component
+function MonthlySummaryCards({ viewMonth, isCurrentMonth }: { viewMonth: string; isCurrentMonth: boolean }) {
+  const { categories, getMonthData } = useEnhancedBudget();
+  
+  const monthData = getMonthData(viewMonth);
+
+  const monthCategories = useMemo(() => {
+    if (isCurrentMonth) {
+      return categories; // Use live data for current month
+    }
+    
+    // Use historical data for past months
+    return categories.map(cat => {
+      const monthCat = monthData?.categories[cat.id];
+      return {
+        ...cat,
+        spent: monthCat?.spent ?? 0,
+        monthlyBudget: monthCat?.budgeted ?? cat.monthlyBudget
+      };
+    });
+  }, [categories, isCurrentMonth, monthData]);
+
+  const totals = useMemo(() => {
+    const totalBudgeted = monthCategories.reduce((sum, c) => sum + (c.monthlyBudget || 0), 0);
+    const totalSpent = monthCategories.reduce((sum, c) => sum + (c.spent || 0), 0);
+    const remaining = totalBudgeted - totalSpent;
+    const variance = totalSpent - totalBudgeted;
+    
+    return { totalBudgeted, totalSpent, remaining, variance };
+  }, [monthCategories]);
+
   return (
-    <div className="rounded-2xl p-4 bg-gradient-to-r from-gray-900 to-gray-800 text-white">
-      <div className="text-xs/5 opacity-80">{label}</div>
-      <div className="text-xl font-bold">{value}</div>
+    <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
+      <div className="bg-gradient-to-r from-blue-500 to-blue-600 rounded-xl p-4 text-white">
+        <div className="text-sm opacity-90">Budgeted</div>
+        <div className="text-xl font-bold">{gbp(totals.totalBudgeted)}</div>
+        <div className="text-xs opacity-75">{monthCategories.length} categories</div>
+      </div>
+      
+      <div className="bg-gradient-to-r from-purple-500 to-purple-600 rounded-xl p-4 text-white">
+        <div className="text-sm opacity-90">Spent</div>
+        <div className="text-xl font-bold">{gbp(totals.totalSpent)}</div>
+        <div className="text-xs opacity-75">
+          {totals.totalBudgeted > 0 ? ((totals.totalSpent / totals.totalBudgeted) * 100).toFixed(1) : 0}% used
+        </div>
+      </div>
+      
+      <div className={`rounded-xl p-4 text-white ${
+        totals.remaining >= 0 
+          ? 'bg-gradient-to-r from-green-500 to-green-600' 
+          : 'bg-gradient-to-r from-red-500 to-red-600'
+      }`}>
+        <div className="text-sm opacity-90">Remaining</div>
+        <div className="text-xl font-bold">{gbp(totals.remaining)}</div>
+        <div className="text-xs opacity-75">
+          {totals.remaining >= 0 ? 'Under budget' : 'Over budget'}
+        </div>
+      </div>
+      
+      <div className={`rounded-xl p-4 text-white ${
+        totals.variance <= 0 
+          ? 'bg-gradient-to-r from-emerald-500 to-emerald-600' 
+          : 'bg-gradient-to-r from-orange-500 to-orange-600'
+      }`}>
+        <div className="text-sm opacity-90">Variance</div>
+        <div className="text-xl font-bold">
+          {totals.variance >= 0 ? '+' : ''}{gbp(totals.variance)}
+        </div>
+        <div className="text-xs opacity-75">vs budget</div>
+      </div>
     </div>
   );
 }
 
-function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (v: boolean) => void; label: string }) {
+// Category Group Component
+function CategoryGroup({ 
+  title, 
+  categories, 
+  emoji, 
+  isCurrentMonth 
+}: { 
+  title: string; 
+  categories: any[]; 
+  emoji: string; 
+  isCurrentMonth: boolean; 
+}) {
+  if (categories.length === 0) return null;
+
   return (
-    <button
-      onClick={() => onChange(!checked)}
-      className={`px-3 py-2 rounded-xl text-sm border ${
-        checked ? "bg-blue-50 border-blue-200 text-blue-700" : "bg-white hover:bg-gray-50"
-      }`}
-    >
-      {label}
-    </button>
+    <div className="space-y-4">
+      <h4 className="text-sm font-medium text-gray-700 flex items-center gap-2">
+        <span>{emoji}</span>
+        {title}
+        <span className="text-xs text-gray-500">({categories.length})</span>
+      </h4>
+      
+      <div className="grid gap-3">
+        {categories.map((category: any) => {
+          const remaining = (category.monthlyBudget || 0) - (category.spent || 0);
+          const percentSpent = category.monthlyBudget > 0 
+            ? (category.spent / category.monthlyBudget) * 100 
+            : 0;
+          
+          const getProgressColor = () => {
+            if (percentSpent <= 50) return 'bg-green-500';
+            if (percentSpent <= 80) return 'bg-yellow-500';
+            if (percentSpent <= 100) return 'bg-orange-500';
+            return 'bg-red-500';
+          };
+
+          return (
+            <div key={category.id} className="bg-white rounded-lg p-4 border border-gray-100 hover:border-gray-200 transition-colors">
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <span className="text-lg">{category.emoji}</span>
+                  <div>
+                    <span className="font-medium text-gray-900">{category.name}</span>
+                    {!isCurrentMonth && (
+                      <span className="ml-2 text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded">
+                        Historical
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <div className="text-right">
+                  <div className="font-semibold text-gray-900">
+                    {gbp(category.spent)} / {gbp(category.monthlyBudget)}
+                  </div>
+                  <div className={`text-sm ${remaining >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                    {remaining >= 0 ? gbp(remaining) : gbp(Math.abs(remaining))} 
+                    {remaining >= 0 ? ' left' : ' over'}
+                  </div>
+                </div>
+              </div>
+              
+              {/* Progress bar */}
+              <div className="w-full bg-gray-200 rounded-full h-2 mb-2">
+                <div 
+                  className={`h-2 rounded-full transition-all duration-300 ${getProgressColor()}`}
+                  style={{ 
+                    width: `${Math.min(percentSpent, 100)}%` 
+                  }}
+                />
+              </div>
+              
+              <div className="flex justify-between items-center text-xs text-gray-500">
+                <span>{percentSpent.toFixed(0)}% used</span>
+                {category.previousMonths && category.previousMonths.length > 0 && (
+                  <span className="text-blue-600">
+                    Avg: {gbp(category.previousMonths.reduce((sum: number, m: any) => sum + m.spent, 0) / category.previousMonths.length)}
+                  </span>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// Main Component
+export default function GroupedBudgetSheet() {
+  const { categories, currentMonth } = useEnhancedBudget();
+  const [viewMonth, setViewMonth] = useState(currentMonth);
+  const isCurrentMonth = viewMonth === currentMonth;
+
+  // Group categories by type
+  const groupedCategories = useMemo(() => {
+    const groups = {
+      essential: categories.filter(c => c.type === 'essential'),
+      lifestyle: categories.filter(c => c.type === 'lifestyle'),
+      savings: categories.filter(c => c.type === 'savings'),
+      debt: categories.filter(c => c.type === 'debt'),
+    };
+    return groups;
+  }, [categories]);
+
+  return (
+    <div className="rounded-2xl bg-white/90 backdrop-blur border border-gray-100 shadow-sm p-5 space-y-6">
+      <MonthSelector />
+      
+      <MonthlySummaryCards viewMonth={viewMonth} isCurrentMonth={isCurrentMonth} />
+
+      {/* Category Groups */}
+      <div className="space-y-8">
+        <CategoryGroup 
+          title="Essential" 
+          categories={groupedCategories.essential} 
+          emoji="🏠"
+          isCurrentMonth={isCurrentMonth}
+        />
+        <CategoryGroup 
+          title="Lifestyle" 
+          categories={groupedCategories.lifestyle} 
+          emoji="🎯"
+          isCurrentMonth={isCurrentMonth}
+        />
+        <CategoryGroup 
+          title="Savings & Goals" 
+          categories={groupedCategories.savings} 
+          emoji="💰"
+          isCurrentMonth={isCurrentMonth}
+        />
+        <CategoryGroup 
+          title="Debt Payments" 
+          categories={groupedCategories.debt} 
+          emoji="💳"
+          isCurrentMonth={isCurrentMonth}
+        />
+      </div>
+
+      {/* Empty state */}
+      {categories.length === 0 && (
+        <div className="text-center py-12">
+          <div className="text-6xl mb-4">📊</div>
+          <h3 className="text-lg font-medium text-gray-900 mb-2">No budget categories yet</h3>
+          <p className="text-gray-600">
+            Add your first budget category to get started with monthly planning
+          </p>
+        </div>
+      )}
+    </div>
   );
 }

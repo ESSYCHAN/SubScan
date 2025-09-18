@@ -1,3 +1,4 @@
+// components/doodle/PlantsSkin.tsx
 "use client";
 import React from "react";
 import { Leaf, Coins, Wand2, RefreshCw, Check, Lock, Unlock } from "lucide-react";
@@ -103,23 +104,100 @@ export default function PlantsSkin() {
               </div>
 
               {/* Pot visual */}
-              <div className="h-24 relative rounded-xl border bg-gradient-to-b from-emerald-50 to-white overflow-hidden mb-3">
-                {/* soil */}
-                <div className="absolute bottom-0 left-0 right-0 h-6 bg-amber-200/70 border-t border-amber-300" />
-                {/* stem */}
-                <div
-                  className="absolute bottom-6 left-1/2 -translate-x-1/2 w-1.5 bg-emerald-500 origin-bottom transition-[height] duration-300"
-                  style={{ height: `${Math.max(4, pct)}%` }}
-                />
-                {/* leaves */}
-                <div className="absolute bottom-[calc(6px+50%)] left-1/2 -translate-x-1/2">
-                  <Leaf className="w-4 h-4 text-emerald-600" />
-                </div>
-                <div className="absolute inset-0 grid place-items-center text-[11px] text-gray-600">
-                  {target ? `${Math.round(pct)}%` : f0(val)}
+              {/* Enhanced Plant visual - Replace the current pot section */}
+              <div className="h-24 relative rounded-xl overflow-hidden mb-3">
+                {/* Pot container */}
+                <div className="absolute inset-0 bg-gradient-to-b from-amber-100 to-amber-200 rounded-xl border-2 border-amber-300/60 shadow-inner">
+                  
+                  {/* Soil layer */}
+                  <div className="absolute bottom-0 left-0 right-0 h-6 bg-gradient-to-b from-amber-800 to-amber-900 border-t-2 border-amber-700 rounded-b-xl">
+                    {/* Soil texture dots */}
+                    <div className="absolute inset-0 opacity-30">
+                      {Array.from({ length: 8 }).map((_, i) => (
+                        <div
+                          key={i}
+                          className="absolute w-1 h-1 bg-amber-600 rounded-full"
+                          style={{
+                            left: `${15 + (i * 10)}%`,
+                            top: `${2 + (i % 3) * 4}px`
+                          }}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                  
+                  {/* Plant stem - grows with progress */}
+                  <div
+                    className="absolute bottom-6 left-1/2 transform -translate-x-1/2 bg-gradient-to-t from-green-600 to-green-400 rounded-full transition-all duration-700 ease-out"
+                    style={{ 
+                      width: '3px',
+                      height: `${Math.max(8, (pct / 100) * 48)}px`,
+                      opacity: pct > 5 ? 1 : 0.3
+                    }}
+                  />
+                  
+                  {/* Leaves - appear at different growth stages */}
+                  {pct > 20 && (
+                    <div 
+                      className="absolute left-1/2 transform -translate-x-1/2 transition-all duration-500"
+                      style={{ 
+                        bottom: `${24 + ((pct / 100) * 24)}px`,
+                        transform: `translateX(-50%) scale(${Math.min(1, pct / 60)})`
+                      }}
+                    >
+                      {/* Left leaf */}
+                      <div className="absolute -left-3 -top-1 w-4 h-6 bg-gradient-to-br from-green-400 to-green-600 rounded-full transform -rotate-45 origin-bottom-right" />
+                      {/* Right leaf */}
+                      <div className="absolute -right-3 -top-1 w-4 h-6 bg-gradient-to-bl from-green-400 to-green-600 rounded-full transform rotate-45 origin-bottom-left" />
+                    </div>
+                  )}
+                  
+                  {/* Flowers/blooms - appear when near target */}
+                  {pct > 70 && (
+                    <div 
+                      className="absolute left-1/2 transform -translate-x-1/2 transition-all duration-500"
+                      style={{ 
+                        bottom: `${30 + ((pct / 100) * 32)}px`,
+                        opacity: (pct - 70) / 30
+                      }}
+                    >
+                      {/* Flower petals */}
+                      <div className="relative">
+                        {Array.from({ length: 5 }).map((_, i) => (
+                          <div
+                            key={i}
+                            className="absolute w-2 h-3 bg-gradient-to-b from-pink-300 to-pink-500 rounded-full origin-bottom"
+                            style={{
+                              transform: `rotate(${i * 72}deg) translateY(-6px)`,
+                              transformOrigin: 'center bottom'
+                            }}
+                          />
+                        ))}
+                        {/* Flower center */}
+                        <div className="absolute inset-0 w-2 h-2 bg-yellow-400 rounded-full m-auto" />
+                      </div>
+                    </div>
+                  )}
+                  
+                  {/* Growth stage indicator */}
+                  <div className="absolute top-1 left-1 text-[10px] font-medium text-green-700">
+                    {pct < 25 && '🌱'} {/* Seedling */}
+                    {pct >= 25 && pct < 50 && '🌿'} {/* Young plant */}
+                    {pct >= 50 && pct < 75 && '🌸'} {/* Budding */}
+                    {pct >= 75 && '🌺'} {/* Full bloom */}
+                  </div>
+                  
+                  {/* Amount display */}
+                  <div className="absolute bottom-1 right-1 text-[10px] font-medium text-amber-800 bg-white/70 px-1 rounded">
+                    {f0(val)}
+                  </div>
+                  
+                  {/* Category emoji on pot */}
+                  <div className="absolute top-2 right-2 text-sm opacity-70">
+                    {c.emoji}
+                  </div>
                 </div>
               </div>
-
               <div className="flex items-center justify-between gap-2">
                 <div className="inline-flex rounded-lg overflow-hidden border">
                   <button
